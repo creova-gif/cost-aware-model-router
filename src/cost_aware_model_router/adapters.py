@@ -383,13 +383,13 @@ def validate_endpoint_security(base_url: str, api_key: str | None) -> None:
         )
 
 
-class OpenAICompatibleAdapter:
-    """Async live adapter for OpenAI-compatible and Ollama endpoints with strict safety guards."""
+class _BaseHTTPAdapter:
+    """Shared async HTTP execution, retry, fail-fast, and spend circuit-breaker logic."""
 
     def __init__(
         self,
         *,
-        base_url: str = "https://api.openai.com/v1",
+        base_url: str,
         api_key: str | None = None,
         max_concurrency: int = 8,
         timeout_seconds: float = 30.0,
@@ -405,6 +405,21 @@ class OpenAICompatibleAdapter:
         self._max_retries = max(0, max_retries)
         self._max_cost_usd = quantize_usd(max_cost_usd)
         self._transport = transport
+
+    def _build_request(
+        self, item: WorkloadItem, model_spec: TierModelSpec
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        raise NotImplementedError
+
+    def _parse_response(
+        self,
+        body: Any,
+        item: WorkloadItem,
+        model_spec: TierModelSpec,
+        p_hash: str,
+        elapsed_ms: float,
+    ) -> tuple[ExecutionTrace, Decimal]:
+        raise NotImplementedError
 
     async def _call_single(
         self,
@@ -434,15 +449,7 @@ class OpenAICompatibleAdapter:
                     "max_cost_usd_circuit_breaker_tripped",
                 )
 
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
-
-        payload: dict[str, Any] = {
-            "model": model_spec.model_id,
-            "messages": [{"role": "user", "content": item.prompt}],
-            "temperature": 0.0,
-        }
+        url, headers, payload = self._build_request(item, model_spec)
 
         async with sem:
             for attempt in range(self._max_retries + 1):
@@ -453,7 +460,7 @@ class OpenAICompatibleAdapter:
                 start_ns = time.perf_counter_ns()
                 try:
                     resp = await client.post(
-                        f"{self._base_url}/chat/completions",
+                        url,
                         headers=headers,
                         json=payload,
                         follow_redirects=False,
@@ -506,8 +513,7 @@ class OpenAICompatibleAdapter:
 
                 try:
                     body = resp.json()
-                    content = str(body["choices"][0]["message"]["content"])
-                except (ValueError, KeyError, IndexError, TypeError):
+                except ValueError:
                     return self._unknown_trace(
                         item.request_id,
                         tier,
@@ -516,61 +522,11 @@ class OpenAICompatibleAdapter:
                         "malformed_response_body",
                     )
 
-                usage = body.get("usage")
-                if (
-                    not isinstance(usage, dict)
-                    or not isinstance(usage.get("prompt_tokens"), int)
-                    or not isinstance(usage.get("completion_tokens"), int)
-                ):
-                    return ExecutionTrace(
-                        request_id=item.request_id,
-                        tier=tier,
-                        model_id=model_spec.model_id,
-                        response_text=content,
-                        prompt_sha256=p_hash,
-                        response_sha256=sha256_hex(content),
-                        input_tokens=0,
-                        output_tokens=0,
-                        latency_ms=elapsed_ms,
-                        cost_usd=Decimal("0"),
-                        tokens_provenance=ProvenanceTag.UNKNOWN,
-                        latency_provenance=ProvenanceTag.MEASURED,
-                        cost_provenance=ProvenanceTag.UNKNOWN,
-                        error_code="missing_usage_tokens",
-                    )
-
-                in_tok = int(usage["prompt_tokens"])
-                out_tok = int(usage["completion_tokens"])
-                billed_usd = usage.get("cost_usd") or usage.get("total_cost_usd")
-                if billed_usd is not None:
-                    try:
-                        cost = quantize_usd(billed_usd)
-                        cost_prov = ProvenanceTag.MEASURED
-                    except (ValueError, ArithmeticError):
-                        cost = model_spec.compute_cost_usd(in_tok, out_tok)
-                        cost_prov = ProvenanceTag.MODELED
-                else:
-                    cost = model_spec.compute_cost_usd(in_tok, out_tok)
-                    cost_prov = ProvenanceTag.MODELED
-
-                async with spend_lock:
-                    running_spend["total"] = quantize_usd(running_spend["total"] + cost)
-
-                return ExecutionTrace(
-                    request_id=item.request_id,
-                    tier=tier,
-                    model_id=model_spec.model_id,
-                    response_text=content,
-                    prompt_sha256=p_hash,
-                    response_sha256=sha256_hex(content),
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
-                    latency_ms=elapsed_ms,
-                    cost_usd=cost,
-                    tokens_provenance=ProvenanceTag.MEASURED,
-                    latency_provenance=ProvenanceTag.MEASURED,
-                    cost_provenance=cost_prov,
-                )
+                trace, cost = self._parse_response(body, item, model_spec, p_hash, elapsed_ms)
+                if cost > Decimal("0"):
+                    async with spend_lock:
+                        running_spend["total"] = quantize_usd(running_spend["total"] + cost)
+                return trace
 
         return self._unknown_trace(
             item.request_id, tier, model_spec.model_id, p_hash, "exhausted_retries"
@@ -633,3 +589,242 @@ class OpenAICompatibleAdapter:
                 results[(req_id, tier)] = await task
 
         return results
+
+
+class OpenAICompatibleAdapter(_BaseHTTPAdapter):
+    """Async live adapter for OpenAI-compatible and Ollama endpoints with strict safety guards."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str = "https://api.openai.com/v1",
+        api_key: str | None = None,
+        max_concurrency: int = 8,
+        timeout_seconds: float = 30.0,
+        max_retries: int = 2,
+        max_cost_usd: Decimal = Decimal("5.00000000"),
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        super().__init__(
+            base_url=base_url,
+            api_key=api_key,
+            max_concurrency=max_concurrency,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            max_cost_usd=max_cost_usd,
+            transport=transport,
+        )
+
+    def _build_request(
+        self, item: WorkloadItem, model_spec: TierModelSpec
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        payload: dict[str, Any] = {
+            "model": model_spec.model_id,
+            "messages": [{"role": "user", "content": item.prompt}],
+            "temperature": 0.0,
+        }
+        return f"{self._base_url}/chat/completions", headers, payload
+
+    def _parse_response(
+        self,
+        body: Any,
+        item: WorkloadItem,
+        model_spec: TierModelSpec,
+        p_hash: str,
+        elapsed_ms: float,
+    ) -> tuple[ExecutionTrace, Decimal]:
+        tier = model_spec.tier
+        try:
+            content = str(body["choices"][0]["message"]["content"])
+        except (KeyError, IndexError, TypeError):
+            return (
+                self._unknown_trace(
+                    item.request_id,
+                    tier,
+                    model_spec.model_id,
+                    p_hash,
+                    "malformed_response_body",
+                ),
+                Decimal("0"),
+            )
+
+        usage = body.get("usage") if isinstance(body, dict) else None
+        if (
+            not isinstance(usage, dict)
+            or not isinstance(usage.get("prompt_tokens"), int)
+            or not isinstance(usage.get("completion_tokens"), int)
+        ):
+            return (
+                ExecutionTrace(
+                    request_id=item.request_id,
+                    tier=tier,
+                    model_id=model_spec.model_id,
+                    response_text=content,
+                    prompt_sha256=p_hash,
+                    response_sha256=sha256_hex(content),
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=elapsed_ms,
+                    cost_usd=Decimal("0"),
+                    tokens_provenance=ProvenanceTag.UNKNOWN,
+                    latency_provenance=ProvenanceTag.MEASURED,
+                    cost_provenance=ProvenanceTag.UNKNOWN,
+                    error_code="missing_usage_tokens",
+                ),
+                Decimal("0"),
+            )
+
+        in_tok = int(usage["prompt_tokens"])
+        out_tok = int(usage["completion_tokens"])
+        billed_usd = usage.get("cost_usd") or usage.get("total_cost_usd")
+        if billed_usd is not None:
+            try:
+                cost = quantize_usd(billed_usd)
+                cost_prov = ProvenanceTag.MEASURED
+            except (ValueError, ArithmeticError):
+                cost = model_spec.compute_cost_usd(in_tok, out_tok)
+                cost_prov = ProvenanceTag.MODELED
+        else:
+            cost = model_spec.compute_cost_usd(in_tok, out_tok)
+            cost_prov = ProvenanceTag.MODELED
+
+        return (
+            ExecutionTrace(
+                request_id=item.request_id,
+                tier=tier,
+                model_id=model_spec.model_id,
+                response_text=content,
+                prompt_sha256=p_hash,
+                response_sha256=sha256_hex(content),
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                latency_ms=elapsed_ms,
+                cost_usd=cost,
+                tokens_provenance=ProvenanceTag.MEASURED,
+                latency_provenance=ProvenanceTag.MEASURED,
+                cost_provenance=cost_prov,
+            ),
+            cost,
+        )
+
+
+class AnthropicAdapter(_BaseHTTPAdapter):
+    """Async live adapter for Anthropic /v1/messages with strict safety and provenance guards."""
+
+    def __init__(
+        self,
+        base_url: str = "https://api.anthropic.com",
+        api_key: str | None = None,
+        anthropic_version: str = "2023-06-01",
+        max_tokens: int = 1024,
+        max_concurrency: int = 8,
+        timeout_seconds: float = 30.0,
+        max_retries: int = 2,
+        max_cost_usd: Decimal = Decimal("5.00000000"),
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        super().__init__(
+            base_url=base_url,
+            api_key=api_key,
+            max_concurrency=max_concurrency,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            max_cost_usd=max_cost_usd,
+            transport=transport,
+        )
+        self._anthropic_version = anthropic_version
+        self._max_tokens = max(1, max_tokens)
+
+    def _build_request(
+        self, item: WorkloadItem, model_spec: TierModelSpec
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "anthropic-version": self._anthropic_version,
+        }
+        if self._api_key:
+            headers["x-api-key"] = self._api_key
+        payload: dict[str, Any] = {
+            "model": model_spec.model_id,
+            "max_tokens": self._max_tokens,
+            "messages": [{"role": "user", "content": item.prompt}],
+        }
+        return f"{self._base_url}/v1/messages", headers, payload
+
+    def _parse_response(
+        self,
+        body: Any,
+        item: WorkloadItem,
+        model_spec: TierModelSpec,
+        p_hash: str,
+        elapsed_ms: float,
+    ) -> tuple[ExecutionTrace, Decimal]:
+        tier = model_spec.tier
+        try:
+            content = str(body["content"][0]["text"])
+        except (KeyError, IndexError, TypeError):
+            return (
+                self._unknown_trace(
+                    item.request_id,
+                    tier,
+                    model_spec.model_id,
+                    p_hash,
+                    "malformed_response_body",
+                ),
+                Decimal("0"),
+            )
+
+        usage = body.get("usage") if isinstance(body, dict) else None
+        in_tok_raw = usage.get("input_tokens") if isinstance(usage, dict) else None
+        out_tok_raw = usage.get("output_tokens") if isinstance(usage, dict) else None
+        if (
+            not isinstance(in_tok_raw, int)
+            or isinstance(in_tok_raw, bool)
+            or not isinstance(out_tok_raw, int)
+            or isinstance(out_tok_raw, bool)
+        ):
+            return (
+                ExecutionTrace(
+                    request_id=item.request_id,
+                    tier=tier,
+                    model_id=model_spec.model_id,
+                    response_text=content,
+                    prompt_sha256=p_hash,
+                    response_sha256=sha256_hex(content),
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=elapsed_ms,
+                    cost_usd=Decimal("0"),
+                    tokens_provenance=ProvenanceTag.UNKNOWN,
+                    latency_provenance=ProvenanceTag.MEASURED,
+                    cost_provenance=ProvenanceTag.UNKNOWN,
+                    error_code="missing_usage_tokens",
+                ),
+                Decimal("0"),
+            )
+
+        in_tok = int(in_tok_raw)
+        out_tok = int(out_tok_raw)
+        cost = model_spec.compute_cost_usd(in_tok, out_tok)
+
+        return (
+            ExecutionTrace(
+                request_id=item.request_id,
+                tier=tier,
+                model_id=model_spec.model_id,
+                response_text=content,
+                prompt_sha256=p_hash,
+                response_sha256=sha256_hex(content),
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                latency_ms=elapsed_ms,
+                cost_usd=cost,
+                tokens_provenance=ProvenanceTag.MEASURED,
+                latency_provenance=ProvenanceTag.MEASURED,
+                cost_provenance=ProvenanceTag.MODELED,
+            ),
+            cost,
+        )
