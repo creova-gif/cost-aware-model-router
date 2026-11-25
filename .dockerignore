@@ -1,0 +1,10 @@
+.venv/
+.git/
+.agents/
+artifacts/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
