@@ -45,6 +45,7 @@ from cost_aware_model_router.schemas import (
     WorkloadItem,
     format_usd_str,
 )
+from cost_aware_model_router.server import create_router_http_server
 from cost_aware_model_router.telemetry import (
     InMemorySpanExporter,
     load_policies_from_json,
@@ -247,6 +248,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum pass rate floor q_min in [0.0, 1.0] (default: 0.90)",
     )
 
+    serve_p = sub.add_parser(
+        "serve",
+        help="Start a local OpenAI-compatible HTTP router server",
+    )
+    serve_p.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind host address (default: 127.0.0.1)",
+    )
+    serve_p.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Bind TCP port (default: 8080)",
+    )
+    serve_p.add_argument(
+        "--policy",
+        type=str,
+        default="threshold-balanced",
+        help="Primary routing policy ID (default: threshold-balanced)",
+    )
+    serve_p.add_argument(
+        "--shadow-policy",
+        type=str,
+        default=None,
+        help="Optional shadow candidate policy ID (e.g. threshold-aggressive)",
+    )
+    serve_p.add_argument(
+        "--hourly-budget-usd",
+        type=Decimal,
+        default=None,
+        help="Optional hourly USD budget to enable AgentBudgetThermostat",
+    )
+
     return parser
 
 
@@ -399,6 +435,51 @@ def _print_holdout_summary(report: HoldoutGeneralizationReport, out_dir: Path) -
     print(f"Artifacts written to: {out_dir}")
 
 
+def _build_gateway_for_serve(
+    *,
+    policy_id: str,
+    shadow_policy_id: str | None = None,
+    hourly_budget_usd: Decimal | None = None,
+) -> OpenAIRouterGateway:
+    suite = default_policy_suite()
+    policies_by_id = {p.policy_id: p for p in suite}
+
+    primary_policy = policies_by_id.get(policy_id)
+    if primary_policy is None:
+        raise ValueError(f"Unknown primary policy {policy_id!r}")
+    if not primary_policy.deployable:
+        raise ValueError(f"Primary policy {policy_id!r} is marked deployable=False")
+
+    shadow_policy: PolicySpec | None = None
+    if shadow_policy_id is not None:
+        shadow_policy = policies_by_id.get(shadow_policy_id)
+        if shadow_policy is None:
+            raise ValueError(f"Unknown shadow policy {shadow_policy_id!r}")
+        if not shadow_policy.deployable:
+            raise ValueError(f"Shadow policy {shadow_policy_id!r} is marked deployable=False")
+
+    thermostat: AgentBudgetThermostat | None = None
+    if hourly_budget_usd is not None:
+        thermostat = AgentBudgetThermostat(
+            policies=[
+                BudgetPolicy(
+                    org_id="org_demo",
+                    agent_id=None,
+                    hourly_budget_usd=hourly_budget_usd,
+                )
+            ]
+        )
+
+    return OpenAIRouterGateway(
+        adapter=DeterministicFixtureAdapter(),
+        catalog=load_bundled_catalog(),
+        primary_policy=primary_policy,
+        shadow_policy=shadow_policy,
+        policies=suite,
+        thermostat=thermostat,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -491,6 +572,28 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Holdout audit failed: {exc}", file=sys.stderr)
             return 1
         _print_holdout_summary(report, args.out)
+        return 0
+
+    if args.command == "serve":
+        try:
+            gateway = _build_gateway_for_serve(
+                policy_id=args.policy,
+                shadow_policy_id=args.shadow_policy,
+                hourly_budget_usd=args.hourly_budget_usd,
+            )
+            server = create_router_http_server(gateway, host=args.host, port=args.port)
+        except Exception as exc:
+            print(f"Failed to start server: {exc}", file=sys.stderr)
+            return 1
+        raw_host, bound_port = server.server_address[:2]
+        bound_host = raw_host.decode("utf-8") if isinstance(raw_host, bytes) else raw_host
+        print(f"cost-router listening on http://{bound_host}:{bound_port}")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
         return 0
 
     return 2
