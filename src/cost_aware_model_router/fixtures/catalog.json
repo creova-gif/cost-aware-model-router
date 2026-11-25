@@ -1,0 +1,29 @@
+{
+  "catalog_version": "2026-11-m1",
+  "models": {
+    "compact": {
+      "tier": "compact",
+      "model_id": "gemini-flash-lite-or-haiku-tier",
+      "provider": "openai_compatible",
+      "input_usd_per_1m": "0.15000000",
+      "output_usd_per_1m": "0.60000000",
+      "price_source": "bundled-catalog-2026-11"
+    },
+    "mid": {
+      "tier": "mid",
+      "model_id": "qwen-72b-or-sonnet-mid-tier",
+      "provider": "openai_compatible",
+      "input_usd_per_1m": "1.20000000",
+      "output_usd_per_1m": "4.80000000",
+      "price_source": "bundled-catalog-2026-11"
+    },
+    "frontier": {
+      "tier": "frontier",
+      "model_id": "claude-opus-or-gpt-frontier-tier",
+      "provider": "openai_compatible",
+      "input_usd_per_1m": "10.00000000",
+      "output_usd_per_1m": "30.00000000",
+      "price_source": "bundled-catalog-2026-11"
+    }
+  }
+}
