@@ -109,7 +109,9 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 | [thermostat.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/thermostat.py) | Autonomous `AgentBudgetThermostat` with per-`(org_id, agent_id)` spend ledgers, progressive tier throttling (`NORMAL -> THROTTLED_TO_MID -> THROTTLED_TO_COMPACT -> CIRCUIT_OPEN`), and repeated-`prompt_sha256` loop breaker. |
 | [gateway.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/gateway.py) | `OpenAIRouterGateway` supporting `/v1/chat/completions` (`ChatCompletionRequest` / `ChatCompletionResponse`), non-disruptive shadow-mode counterfactual evaluation (`ShadowComparisonRecord`), and `/v1/finops/shadow-summary`. |
 | [telemetry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/telemetry.py) | OpenTelemetry `gen_ai.*` and `cost_router.*` span instrumentation (`OTelSpanRecord`, `InMemorySpanExporter`), declarative policy loader (`load_policies_from_json`), and stratified holdout splitting (`split_workload_holdout`). |
-| [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, and `cost-router verify-receipt`. |
+| [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py) | Zero-dependency Prometheus `0.0.4` / OpenMetrics text exporter (`render_prometheus_metrics`) with label-value escaping (`escape_prometheus_label_value`) for `GET /metrics`. |
+| [judge.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/judge.py) | `LLMJudge` protocol, `DeterministicRubricJudge`, and `OutOfSamplePolicyAuditor` for train/holdout policy generalization audits (`HoldoutGeneralizationReport`). |
+| [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, and `cost-router audit-holdout`. |
 
 ---
 
@@ -227,6 +229,27 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+### 6. Simulate Agent Budget Thermostat & Audit Out-of-Sample Generalization
+
+```bash
+# Multi-agent gateway + thermostat + OTel simulation
+cost-router simulate-thermostat --out ./artifacts/thermostat-sim
+# Writes thermostat-economics.json, shadow-summary.json, and otel-spans.jsonl
+
+# Train/holdout split audit to detect in-sample threshold overfitting
+cost-router audit-holdout --out ./artifacts/holdout-audit --holdout-fraction 0.30 --quality-floor 0.90
+# Writes holdout-generalization.json (e.g., 95.3% train vs 82.4% holdout on support-and-code-v1.jsonl)
+```
+
+### 7. Scrape Prometheus / OpenMetrics Endpoint (`GET /metrics`)
+
+The gateway ASGI transport (`create_gateway_asgi_transport` in [gateway.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/gateway.py)) exposes `GET /metrics` (`text/plain; version=0.0.4; charset=utf-8`), powered by [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py):
+
+- `cost_router_requests_total{org_id,tier,provenance,shadow_mode}` (counter)
+- `cost_router_spend_usd_total{org_id,tier,provenance}` (counter, 8-place USD `Decimal`)
+- `cost_router_latency_ms_sum{org_id,tier}` / `cost_router_latency_ms_count{org_id,tier}` (summary)
+- `cost_router_cache_hits_total` (counter) and `cost_router_goodput_usd` (gauge) when a thermostat is attached
+
 ---
 
 ## Verified Milestone 1 Benchmark (`support-and-code-v1.jsonl`)
@@ -269,6 +292,8 @@ pytest -q
 - **ADR-000 (Architecture Decision Record Template):** [docs/adr/000-template.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/000-template.md)
 - **ADR-001 (Milestone 1 — Hexagonal Core, Per-Metric Provenance & 2D Pareto Savings Receipt):** [docs/adr/001-milestone-1-pareto-replay-and-provenance.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/001-milestone-1-pareto-replay-and-provenance.md)
 - **ADR-002 (Milestone 2 — Agent Budget Thermostat, Shadow Gateway & OpenTelemetry Instrumentation):** [docs/adr/002-milestone-2-budget-thermostat-and-shadow-gateway.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/002-milestone-2-budget-thermostat-and-shadow-gateway.md)
+- **ADR-003 (Zero-Dependency Prometheus/OpenMetrics Exporter & Out-of-Sample Holdout Audit):** [docs/adr/003-prometheus-openmetrics-and-holdout-audit.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/003-prometheus-openmetrics-and-holdout-audit.md)
+- **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **STRIDE Threat Model & AI-Router Security Mitigations:** [docs/THREAT_MODEL.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/THREAT_MODEL.md)
 - **Sample Auditable Savings Receipt (Markdown):** [artifacts/demo/savings-receipt.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/artifacts/demo/savings-receipt.md)
 - **Sample Auditable Savings Receipt (JSON):** [artifacts/demo/savings-receipt.json](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/artifacts/demo/savings-receipt.json)
