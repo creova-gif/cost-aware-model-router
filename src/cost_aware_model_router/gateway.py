@@ -17,6 +17,7 @@ from cost_aware_model_router.adapters import (
     ProviderAdapter,
     load_bundled_catalog,
 )
+from cost_aware_model_router.metrics import render_prometheus_metrics
 from cost_aware_model_router.policies import default_policy_suite
 from cost_aware_model_router.schemas import (
     TIER_ORDER,
@@ -705,6 +706,20 @@ def create_asgi_or_httpx_app(gateway: OpenAIRouterGateway) -> httpx.MockTranspor
                     status_code=400,
                     json={"error": {"message": str(exc)}},
                 )
+
+        if method == "GET" and path == "/metrics":
+            spans = gateway.span_exporter.get_spans()
+            summary = (
+                gateway._thermostat.summarize_economics()
+                if gateway._thermostat is not None
+                else None
+            )
+            payload = render_prometheus_metrics(spans, summary=summary)
+            return httpx.Response(
+                status_code=200,
+                content=payload.encode("utf-8"),
+                headers={"content-type": "text/plain; version=0.0.4; charset=utf-8"},
+            )
 
         return httpx.Response(
             status_code=404,
