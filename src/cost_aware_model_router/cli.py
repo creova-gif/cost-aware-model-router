@@ -21,6 +21,10 @@ from cost_aware_model_router.gateway import (
     OpenAIRouterGateway,
     ThermostatBlockedError,
 )
+from cost_aware_model_router.judge import (
+    HoldoutGeneralizationReport,
+    OutOfSamplePolicyAuditor,
+)
 from cost_aware_model_router.policies import (
     build_evaluation_matrix,
     default_policy_suite,
@@ -220,6 +224,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output directory for thermostat-economics.json, shadow-summary.json, and otel-spans.jsonl",
     )
 
+    holdout_p = sub.add_parser(
+        "audit-holdout",
+        help="Fit threshold policy on train split and audit out-of-sample generalization on holdout split",
+    )
+    holdout_p.add_argument(
+        "--out",
+        type=Path,
+        default=Path("./artifacts/holdout-audit"),
+        help="Output directory for holdout-generalization.json",
+    )
+    holdout_p.add_argument(
+        "--holdout-fraction",
+        type=float,
+        default=0.30,
+        help="Deterministic holdout fraction in (0.0, 1.0) (default: 0.30)",
+    )
+    holdout_p.add_argument(
+        "--quality-floor",
+        type=float,
+        default=0.90,
+        help="Minimum pass rate floor q_min in [0.0, 1.0] (default: 0.90)",
+    )
+
     return parser
 
 
@@ -333,6 +360,45 @@ async def _run_thermostat_simulation(out_dir: Path) -> SpendSummary:
     return summary
 
 
+async def _run_holdout_audit(
+    out_dir: Path,
+    holdout_fraction: float,
+    quality_floor: float,
+) -> HoldoutGeneralizationReport:
+    workload = generate_bundled_workload()
+    catalog = load_bundled_catalog()
+    adapter = DeterministicFixtureAdapter()
+    auditor = OutOfSamplePolicyAuditor(holdout_fraction=holdout_fraction)
+    traces = await adapter.execute_workload(workload, catalog)
+    report = auditor.audit(workload, traces, quality_floor=quality_floor)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_text = json.dumps(json.loads(report.model_dump_json()), indent=2, sort_keys=True)
+    (out_dir / "holdout-generalization.json").write_text(json_text + "\n", encoding="utf-8")
+    return report
+
+
+def _print_holdout_summary(report: HoldoutGeneralizationReport, out_dir: Path) -> None:
+    print(
+        f"Holdout Audit: train={report.train_requests} | holdout={report.holdout_requests} | "
+        f"thresholds=(compact<{report.selected_compact_max:.2f}, mid<{report.selected_mid_max:.2f})"
+    )
+    print(
+        f"Pass Rate: train={report.in_sample_pass_rate * 100:.1f}% | "
+        f"holdout={report.out_of_sample_pass_rate * 100:.1f}% "
+        f"(delta={report.generalization_pass_delta * 100:+.1f}%)"
+    )
+    print(
+        f"Savings vs Baseline: train={report.in_sample_savings_pct:+.1f}% | "
+        f"holdout={report.out_of_sample_savings_pct:+.1f}%"
+    )
+    print(
+        f"holds_quality_floor_out_of_sample={report.holds_quality_floor_out_of_sample} "
+        f"(floor={report.quality_floor * 100:.1f}%)"
+    )
+    print(f"Artifacts written to: {out_dir}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -410,6 +476,21 @@ def main(argv: list[str] | None = None) -> int:
             f"Total spend: ${format_usd_str(summary.total_cost_usd)}"
         )
         print(f"Artifacts written to: {args.out}")
+        return 0
+
+    if args.command == "audit-holdout":
+        try:
+            report = asyncio.run(
+                _run_holdout_audit(
+                    out_dir=args.out,
+                    holdout_fraction=args.holdout_fraction,
+                    quality_floor=args.quality_floor,
+                )
+            )
+        except Exception as exc:
+            print(f"Holdout audit failed: {exc}", file=sys.stderr)
+            return 1
+        _print_holdout_summary(report, args.out)
         return 0
 
     return 2

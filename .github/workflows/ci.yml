@@ -21,6 +21,8 @@ jobs:
           pytest -v
           cost-router demo --out ./artifacts/ci-demo
           cost-router verify-receipt ./artifacts/ci-demo/savings-receipt.json
+          cost-router simulate-thermostat --out ./artifacts/ci-demo/thermostat
+          cost-router audit-holdout --out ./artifacts/ci-demo/holdout
       - uses: actions/upload-artifact@v4
         with:
           name: milestone-1-pareto-demo
