@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import uuid
+from collections.abc import Mapping
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -14,9 +18,11 @@ from cost_aware_model_router.gateway import (
 )
 from cost_aware_model_router.governance import TenantRole
 from cost_aware_model_router.metrics import render_prometheus_metrics
-from cost_aware_model_router.resilience import ProviderCircuitBreaker
+from cost_aware_model_router.resilience import CircuitState, ProviderCircuitBreaker
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
+_REQUEST_ID_MAX_LEN = 128
+_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
 
 _HEADER_TO_FIELD: dict[str, str] = {
     "x-org-id": "x_org_id",
@@ -24,6 +30,18 @@ _HEADER_TO_FIELD: dict[str, str] = {
     "x-policy-id": "x_policy_id",
     "x-shadow-candidate-policy-id": "x_shadow_candidate_policy_id",
 }
+
+
+def _resolve_request_id(headers: Message[str, str] | Mapping[str, str]) -> str:
+    """Return a validated X-Request-Id header or generate a fresh UUID4 hex correlation ID."""
+    raw = headers.get("X-Request-Id")
+    if (
+        isinstance(raw, str)
+        and 0 < len(raw) <= _REQUEST_ID_MAX_LEN
+        and _REQUEST_ID_PATTERN.fullmatch(raw) is not None
+    ):
+        return raw
+    return uuid.uuid4().hex
 
 
 def create_router_http_server(
@@ -39,11 +57,23 @@ def create_router_http_server(
             # Suppress default stderr request logging; callers/CLI control output.
             return
 
+        def _current_request_id(self) -> str:
+            cached: str | None = getattr(self, "_request_id", None)
+            if cached is None:
+                cached = _resolve_request_id(self.headers)
+                self._request_id = cached
+            return cached
+
         def _send_bytes(self, status_code: int, content_type: str, body: bytes) -> None:
+            request_id = self._current_request_id()
             self.send_response(status_code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Request-Id", request_id)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
 
@@ -74,12 +104,31 @@ def create_router_http_server(
             return True, decision.org_id
 
         def do_GET(self) -> None:
+            self._request_id = _resolve_request_id(self.headers)
             try:
                 parsed = urlsplit(self.path)
                 path = parsed.path
 
                 if path == "/healthz":
                     self._send_json(200, {"status": "ok"})
+                    return
+
+                if path == "/readyz":
+                    cb = getattr(gateway.adapter, "circuit_breaker", None)
+                    if isinstance(cb, ProviderCircuitBreaker):
+                        snapshot = cb.snapshot()
+                        if snapshot and all(
+                            state == CircuitState.OPEN for state in snapshot.values()
+                        ):
+                            self._send_json(
+                                503,
+                                {
+                                    "status": "not_ready",
+                                    "reason": "all_tier_circuits_open",
+                                },
+                            )
+                            return
+                    self._send_json(200, {"status": "ready"})
                     return
 
                 if path == "/v1/models":
@@ -192,6 +241,7 @@ def create_router_http_server(
                 self._send_json(500, {"error": {"message": "Internal server error"}})
 
         def do_POST(self) -> None:
+            self._request_id = _resolve_request_id(self.headers)
             try:
                 parsed = urlsplit(self.path)
                 path = parsed.path
