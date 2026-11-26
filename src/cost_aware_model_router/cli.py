@@ -458,6 +458,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to hashed TenantAuthRegistry JSON",
     )
 
+    rotate_p = sub.add_parser(
+        "rotate-key",
+        help="Atomically rotate a tenant virtual API key in a hashed TenantAuthRegistry JSON",
+    )
+    rotate_p.add_argument(
+        "--key-id",
+        type=str,
+        required=True,
+        help="Key ID to rotate (disable old key and issue replacement)",
+    )
+    rotate_p.add_argument(
+        "--auth-config",
+        type=Path,
+        required=True,
+        help="Path to hashed TenantAuthRegistry JSON",
+    )
+
+    list_keys_p = sub.add_parser(
+        "list-keys",
+        help="List non-secret metadata for tenant virtual API keys in a hashed TenantAuthRegistry JSON",
+    )
+    list_keys_p.add_argument(
+        "--auth-config",
+        type=Path,
+        required=True,
+        help="Path to hashed TenantAuthRegistry JSON",
+    )
+
     prune_p = sub.add_parser(
         "prune-db",
         help="Prune old shadow_comparisons and otel_spans from a SQLiteEconomicsStore database",
@@ -976,6 +1004,43 @@ def main(argv: list[str] | None = None) -> int:
         print(f"org_id={record.org_id}")
         print("enabled=false")
         print(f"auth_config={args.auth_config}")
+        return 0
+
+    if args.command == "rotate-key":
+        try:
+            if not args.auth_config.is_file():
+                raise FileNotFoundError(f"Auth config file not found: {args.auth_config}")
+            registry = TenantAuthRegistry.from_json(args.auth_config.read_text(encoding="utf-8"))
+            raw_token, record = registry.rotate_key(args.key_id)
+            args.auth_config.write_text(registry.to_json() + "\n", encoding="utf-8")
+        except Exception as exc:
+            print(f"Key rotation failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"old_key_id={args.key_id}")
+        print(f"key_id={record.key_id}")
+        print(f"org_id={record.org_id}")
+        print(f"role={record.role.value}")
+        print(f"key_prefix={record.key_prefix}")
+        print(f"auth_config={args.auth_config}")
+        print(f"token={raw_token}")
+        return 0
+
+    if args.command == "list-keys":
+        try:
+            if not args.auth_config.is_file():
+                raise FileNotFoundError(f"Auth config file not found: {args.auth_config}")
+            registry = TenantAuthRegistry.from_json(args.auth_config.read_text(encoding="utf-8"))
+            records = registry.list_records()
+        except Exception as exc:
+            print(f"Listing keys failed: {exc}", file=sys.stderr)
+            return 1
+        for rec in records:
+            enabled_str = "true" if rec.enabled else "false"
+            print(
+                f"key_id={rec.key_id} org_id={rec.org_id} role={rec.role.value} "
+                f"key_prefix={rec.key_prefix} enabled={enabled_str} "
+                f"rate_limit_rps={rec.rate_limit_rps} burst_capacity={rec.burst_capacity}"
+            )
         return 0
 
     if args.command == "prune-db":
