@@ -38,6 +38,13 @@ from cost_aware_model_router.learner import (
 )
 from cost_aware_model_router.metrics import render_prometheus_metrics
 from cost_aware_model_router.registry import MultiProviderAdapter
+from cost_aware_model_router.resilience import (
+    BoundedTTLCache,
+    CircuitBreakerConfig,
+    CircuitState,
+    FallbackChainAdapter,
+    ProviderCircuitBreaker,
+)
 from cost_aware_model_router.schemas import (
     ModelTier,
     PolicyKind,
@@ -71,15 +78,19 @@ __all__ = [
     "AnthropicAdapter",
     "ArmStats",
     "AuthDecision",
+    "BoundedTTLCache",
     "BudgetPolicy",
     "ChatCompletionRequest",
     "ChatCompletionResponse",
     "ChatMessage",
+    "CircuitBreakerConfig",
+    "CircuitState",
     "ComplexityBucket",
     "ContextualBanditConfig",
     "ContextualBanditRouter",
     "DeterministicFixtureAdapter",
     "DeterministicRubricJudge",
+    "FallbackChainAdapter",
     "HoldoutGeneralizationReport",
     "InMemorySpanExporter",
     "JudgeVerdict",
@@ -96,6 +107,7 @@ __all__ = [
     "PricingCatalog",
     "ProvenanceTag",
     "ProviderAdapter",
+    "ProviderCircuitBreaker",
     "RubricCriterion",
     "SQLiteEconomicsStore",
     "SavingsReceipt",
