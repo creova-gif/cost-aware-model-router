@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `HEAD` probe support on `/healthz`, `/readyz`, and `GET` routes in `_RouterRequestHandler` (`HEAD /healthz` and `HEAD /readyz` return status codes and headers without a response body for load balancers).
   - Added atomic `TenantAuthRegistry.rotate_key()` and `cost-router rotate-key` / `cost-router list-keys` CLI subcommands for key rotation and non-secret key inventory inspection.
   - Documented these decisions in `docs/adr/013-head-probes-and-key-rotation.md` (`ADR-013`).
+- **OpenAI-Compatible SSE Streaming & Atomic `0o600` Auth-Config Writes (`gateway.py`, `server.py`, `cli.py`):**
+  - Added OpenAI-compatible `stream=True` Server-Sent Events (`text/event-stream; charset=utf-8`) framing on `POST /v1/chat/completions`, emitting `chat.completion.chunk` events followed by `data: [DONE]\n\n` while preserving thermostat, shadow-mode, and OTel accounting.
+  - Added `_write_auth_config_atomic` in `cli.py` to write `auth-config.json` atomically with `0o600` permissions for `cost-router issue-key`, `cost-router revoke-key`, and `cost-router rotate-key`.
+  - Documented these decisions in `docs/adr/014-openai-sse-streaming-and-atomic-auth-writes.md` (`ADR-014`).
 
 ## [0.4.0] - 2026-11-26
 

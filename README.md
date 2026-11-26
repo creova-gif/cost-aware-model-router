@@ -119,7 +119,7 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 | [telemetry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/telemetry.py) | OpenTelemetry `gen_ai.*` and `cost_router.*` span instrumentation (`OTelSpanRecord`, `InMemorySpanExporter`), declarative policy loader (`load_policies_from_json`), and stratified holdout splitting (`split_workload_holdout`). |
 | [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py) | Zero-dependency Prometheus `0.0.4` / OpenMetrics text exporter (`render_prometheus_metrics`) with label-value escaping (`escape_prometheus_label_value`) for `GET /metrics`. |
 | [judge.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/judge.py) | `LLMJudge` protocol, `DeterministicRubricJudge`, and `OutOfSamplePolicyAuditor` for train/holdout policy generalization audits (`HoldoutGeneralizationReport`). |
-| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `_RouterHTTPServer` (`ThreadingHTTPServer` + shared `_AsyncLoopRunner` background event loop via `create_router_http_server`) exposing `GET`/`HEAD` `/healthz`, `GET`/`HEAD` `/readyz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `POST /v1/finops/circuits/reset` (`ADMIN`), `/metrics`, and `/dashboard`, with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`). |
+| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `_RouterHTTPServer` (`ThreadingHTTPServer` + shared `_AsyncLoopRunner` background event loop via `create_router_http_server`) exposing `GET`/`HEAD` `/healthz`, `GET`/`HEAD` `/readyz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (JSON + `stream=True` SSE `chat.completion.chunk` with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `POST /v1/finops/circuits/reset` (`ADMIN`), `/metrics`, and `/dashboard`, with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`). |
 | [store.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/store.py) | Thread-safe WAL-mode `SQLiteEconomicsStore` for durable persistence of `SpendLedgerEntry`, `ShadowComparisonRecord`, and `OTelSpanRecord` with 8-place USD string precision, `SpendSummary` aggregation, `is_healthy()` readiness probe, and `prune_older_than()` telemetry retention pruning. |
 | [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, `cost-router train-bandit`, `cost-router issue-key`, `cost-router list-keys`, `cost-router rotate-key`, `cost-router revoke-key`, `cost-router prune-db`, and `cost-router serve`. |
 
@@ -283,7 +283,7 @@ The gateway ASGI transport (`create_gateway_asgi_transport` in [gateway.py](file
 
 ### 8. Serve the Local OpenAI-Compatible HTTP Gateway (`cost-router serve`)
 
-Start the zero-dependency `ThreadingHTTPServer` locally or in a non-root container (`Dockerfile`). Optionally provision a hashed `TenantAuthRegistry` JSON config via `cost-router issue-key` and load it with `--auth-config`, pass multi-tenant thermostat envelopes with `--budget-config`, and enable privacy-safe structured JSON access logs (`request_id`, `method`, `path`, `status_code`, `duration_ms`) with `--access-log`:
+Start the zero-dependency `ThreadingHTTPServer` locally or in a non-root container (`Dockerfile`). Optionally provision a hashed `TenantAuthRegistry` JSON config via `cost-router issue-key` (`issue-key`, `rotate-key`, and `revoke-key` all persist `auth-config.json` atomically with `0o600` permissions via `_write_auth_config_atomic`) and load it with `--auth-config`, pass multi-tenant thermostat envelopes with `--budget-config`, and enable privacy-safe structured JSON access logs (`request_id`, `method`, `path`, `status_code`, `duration_ms`) with `--access-log`:
 
 ```bash
 # Issue a virtual API key (prints raw token once; stores only SHA-256 digest in auth-config.json)
@@ -351,6 +351,13 @@ curl -s -X POST http://127.0.0.1:8080/v1/chat/completions \
   -H "x-org-id: org_demo" \
   -H "x-agent-id: triage_router" \
   -d '{"model":"auto","messages":[{"role":"user","content":"Classify ticket #18 into BILLING or ACCOUNT."}]}'
+
+# OpenAI-compatible streaming chat completion (returns text/event-stream chat.completion.chunk + data: [DONE])
+curl -sN -X POST http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "x-org-id: org_demo" \
+  -H "x-agent-id: triage_router" \
+  -d '{"model":"auto","stream":true,"messages":[{"role":"user","content":"Classify ticket #18 into BILLING or ACCOUNT."}]}'
 
 # FinOps thermostat economics summary (optional ?org_id=... filter)
 curl -s "http://127.0.0.1:8080/v1/finops/economics?org_id=org_demo"
@@ -477,6 +484,7 @@ pytest -q
 - **ADR-011 (Shared Event Loop, Bounded Store Retention Pruning & Circuit Breaker Reset):** [docs/adr/011-shared-event-loop-retention-and-circuit-reset.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/011-shared-event-loop-retention-and-circuit-reset.md)
 - **ADR-012 (Structured Access Log, Burst Socket Hardening, Multi-Tenant Budget Config & `429 Retry-After`):** [docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md)
 - **ADR-013 (HTTP `HEAD` Probe Support & Atomic Tenant Key Rotation):** [docs/adr/013-head-probes-and-key-rotation.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/013-head-probes-and-key-rotation.md)
+- **ADR-014 (OpenAI-Compatible SSE Streaming & Atomic `0o600` Auth-Config Writes):** [docs/adr/014-openai-sse-streaming-and-atomic-auth-writes.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/014-openai-sse-streaming-and-atomic-auth-writes.md)
 - **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **Changelog (Release History):** [CHANGELOG.md](CHANGELOG.md)
 - **STRIDE Threat Model & AI-Router Security Mitigations:** [docs/THREAT_MODEL.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/THREAT_MODEL.md)
