@@ -102,16 +102,18 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 |---|---|
 | [schemas.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/schemas.py) | Pydantic v2 domain models (`WorkloadItem`, `ExecutionTrace`, `EvalVerdict`, `MetricProvenance`, `PolicySpec`, `PolicyResult`, `SavingsReceipt`) with 8-place `UsdDecimal` serialization and `extra="forbid"`. |
 | [adapters.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/adapters.py) | `ProviderAdapter` protocol, bundled 60-prompt workload generator, `DeterministicFixtureAdapter`, and hardened async `OpenAICompatibleAdapter` + `AnthropicAdapter` (`Semaphore(8)`, `--max-cost-usd` breaker, non-loopback `http://` auth block, `follow_redirects=False`). |
+| [registry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/registry.py) | `MultiProviderAdapter` for concurrent heterogeneous 3-tier routing (`tier_adapters` overrides, `TierModelSpec.provider` mapping, `fallback_adapter`, and `ProvenanceTag.UNKNOWN` fallback for unconfigured tiers). |
 | [evaluators.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/evaluators.py) | Declarative evaluator engine (`json_schema`, ReDoS-guarded `regex_match`, `exact_match`, `json_field_predicate`, `latency_sla`) separating `content_passed` from `latency_passed`. |
 | [policies.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/policies.py) | Complete-case `UNKNOWN` intersection, deployable policies (`static_tier`, `complexity_threshold`, `cascade_escalation`), `ear_oracle` hindsight benchmark, and exact 2D Pareto frontier solver (`compute_2d_pareto_frontier`, `select_policy_for_floor`). |
 | [receipt.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/receipt.py) | Canonical JSON serializer (`allow_nan=False`, sorted UTF-8 keys, fixed-precision strings), SHA-256 `SavingsReceipt` builder, Markdown renderer, and raw-dict-first `verify_receipt_file()`. |
 | [report.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/report.py) | Self-contained, XSS-hardened HTML generator (`pareto-explorer.html`) with interactive quality floor slider, `document.createElementNS` SVG chart, and filterable decision audit table. |
+| [dashboard.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/dashboard.py) | Zero-CDN, XSS-hardened HTML generator (`render_live_finops_dashboard_html`) for the live FinOps control-plane `/dashboard` (unit economics KPIs, spend breakdowns, shadow-mode comparisons, and recent OTel `gen_ai.*` spans). |
 | [thermostat.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/thermostat.py) | Autonomous `AgentBudgetThermostat` with per-`(org_id, agent_id)` spend ledgers, progressive tier throttling (`NORMAL -> THROTTLED_TO_MID -> THROTTLED_TO_COMPACT -> CIRCUIT_OPEN`), and repeated-`prompt_sha256` loop breaker. |
 | [gateway.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/gateway.py) | `OpenAIRouterGateway` supporting `/v1/chat/completions` (`ChatCompletionRequest` / `ChatCompletionResponse`), non-disruptive shadow-mode counterfactual evaluation (`ShadowComparisonRecord`), and `/v1/finops/shadow-summary`. |
 | [telemetry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/telemetry.py) | OpenTelemetry `gen_ai.*` and `cost_router.*` span instrumentation (`OTelSpanRecord`, `InMemorySpanExporter`), declarative policy loader (`load_policies_from_json`), and stratified holdout splitting (`split_workload_holdout`). |
 | [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py) | Zero-dependency Prometheus `0.0.4` / OpenMetrics text exporter (`render_prometheus_metrics`) with label-value escaping (`escape_prometheus_label_value`) for `GET /metrics`. |
 | [judge.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/judge.py) | `LLMJudge` protocol, `DeterministicRubricJudge`, and `OutOfSamplePolicyAuditor` for train/holdout policy generalization audits (`HoldoutGeneralizationReport`). |
-| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `ThreadingHTTPServer` (`create_router_http_server`) exposing `/healthz`, `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, and `/metrics`. |
+| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `ThreadingHTTPServer` (`create_router_http_server`) exposing `/healthz`, `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/metrics`, and `/dashboard`. |
 | [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, and `cost-router serve`. |
 
 ---
@@ -230,6 +232,26 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+You can also compose heterogeneous providers per tier with `MultiProviderAdapter` (`tier_adapters` overrides `provider_adapters[spec.provider]`, falling back to `fallback_adapter` or emitting `ProvenanceTag.UNKNOWN` with `error_code="missing_provider_adapter"`):
+
+```python
+from cost_aware_model_router import (
+    AnthropicAdapter,
+    DeterministicFixtureAdapter,
+    ModelTier,
+    MultiProviderAdapter,
+    OpenAICompatibleAdapter,
+)
+
+adapter = MultiProviderAdapter(
+    provider_adapters={
+        "openai": OpenAICompatibleAdapter(base_url="https://api.openai.com/v1", api_key="..."),
+        "anthropic": AnthropicAdapter(api_key="..."),
+    },
+    tier_adapters={ModelTier.COMPACT: DeterministicFixtureAdapter()},
+)
+```
+
 ### 6. Simulate Agent Budget Thermostat & Audit Out-of-Sample Generalization
 
 ```bash
@@ -283,6 +305,9 @@ curl -s "http://127.0.0.1:8080/v1/finops/economics?org_id=org_demo"
 
 # Prometheus / OpenMetrics scrape endpoint
 curl -s http://127.0.0.1:8080/metrics
+
+# Live FinOps control-plane dashboard (zero-CDN HTML; open in browser)
+curl -s http://127.0.0.1:8080/dashboard
 ```
 
 Or build and run the non-root Docker image (`appuser`, port `8080`):
@@ -336,6 +361,7 @@ pytest -q
 - **ADR-002 (Milestone 2 — Agent Budget Thermostat, Shadow Gateway & OpenTelemetry Instrumentation):** [docs/adr/002-milestone-2-budget-thermostat-and-shadow-gateway.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/002-milestone-2-budget-thermostat-and-shadow-gateway.md)
 - **ADR-003 (Zero-Dependency Prometheus/OpenMetrics Exporter & Out-of-Sample Holdout Audit):** [docs/adr/003-prometheus-openmetrics-and-holdout-audit.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/003-prometheus-openmetrics-and-holdout-audit.md)
 - **ADR-004 (Zero-Dependency Local HTTP Server & Non-Root Container Packaging):** [docs/adr/004-local-http-server-and-container-packaging.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/004-local-http-server-and-container-packaging.md)
+- **ADR-005 (Multi-Provider Registry & Live FinOps Control-Plane Dashboard):** [docs/adr/005-multi-provider-registry-and-live-dashboard.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/005-multi-provider-registry-and-live-dashboard.md)
 - **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **Changelog (Release History):** [CHANGELOG.md](CHANGELOG.md)
 - **STRIDE Threat Model & AI-Router Security Mitigations:** [docs/THREAT_MODEL.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/THREAT_MODEL.md)

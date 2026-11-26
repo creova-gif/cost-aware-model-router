@@ -6,6 +6,7 @@ from cost_aware_model_router.adapters import (
     OpenAICompatibleAdapter,
     ProviderAdapter,
 )
+from cost_aware_model_router.dashboard import render_live_finops_dashboard_html
 from cost_aware_model_router.gateway import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -23,6 +24,7 @@ from cost_aware_model_router.judge import (
     RubricCriterion,
 )
 from cost_aware_model_router.metrics import render_prometheus_metrics
+from cost_aware_model_router.registry import MultiProviderAdapter
 from cost_aware_model_router.schemas import (
     ModelTier,
     PolicyKind,
@@ -64,6 +66,7 @@ __all__ = [
     "JudgeVerdict",
     "LLMJudge",
     "ModelTier",
+    "MultiProviderAdapter",
     "OTelSpanRecord",
     "OpenAICompatibleAdapter",
     "OpenAIRouterGateway",
@@ -86,5 +89,6 @@ __all__ = [
     "WorkloadItem",
     "create_router_http_server",
     "healthcheck",
+    "render_live_finops_dashboard_html",
     "render_prometheus_metrics",
 ]
