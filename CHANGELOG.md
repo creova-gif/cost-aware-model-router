@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Live FinOps Control-Plane Dashboard (`dashboard.py`, `server.py`):**
   - `render_live_finops_dashboard_html` generating a zero-CDN, XSS-hardened HTML control plane with thermostat unit-economics KPIs, spend breakdowns (by org, agent, category, and tier), shadow-mode counterfactual comparisons, recent OpenTelemetry `gen_ai.*` spans, and live client-side refresh.
   - `GET /dashboard` route on `create_router_http_server` (`text/html; charset=utf-8`, `Cache-Control: no-store`).
+- **Durable SQLite Economics Persistence (`store.py`):**
+  - `SQLiteEconomicsStore` providing thread-safe, WAL-mode SQLite persistence for `SpendLedgerEntry`, `ShadowComparisonRecord`, and `OTelSpanRecord` with 8-place USD string precision and `SpendSummary` aggregation.
 - **Top-Level Package Exports & Architecture Record:**
-  - Exported `MultiProviderAdapter` and `render_live_finops_dashboard_html` in `cost_aware_model_router.__init__`.
+  - Exported `MultiProviderAdapter`, `SQLiteEconomicsStore`, and `render_live_finops_dashboard_html` in `cost_aware_model_router.__init__`.
   - Documented the design and failure modes in `docs/adr/005-multi-provider-registry-and-live-dashboard.md` (`ADR-005`).
 
 ## [0.1.0] - 2026-11-25
