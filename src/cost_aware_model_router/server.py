@@ -12,6 +12,7 @@ from cost_aware_model_router.gateway import (
     OpenAIRouterGateway,
     ThermostatBlockedError,
 )
+from cost_aware_model_router.governance import TenantRole
 from cost_aware_model_router.metrics import render_prometheus_metrics
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
@@ -52,6 +53,25 @@ def create_router_http_server(
         def _send_text(self, status_code: int, content_type: str, text: str) -> None:
             self._send_bytes(status_code, content_type, text.encode("utf-8"))
 
+        def _authorize(
+            self,
+            *,
+            required_role: TenantRole,
+            claimed_org_id: str | None = None,
+        ) -> tuple[bool, str | None]:
+            registry = gateway.auth_registry
+            if registry is None:
+                return True, None
+            decision = registry.authenticate_and_authorize(
+                self.headers.get("Authorization"),
+                required_role=required_role,
+                claimed_org_id=claimed_org_id,
+            )
+            if not decision.authenticated or not decision.authorized or decision.rate_limited:
+                self._send_json(decision.status_code, {"error": {"message": decision.reason}})
+                return False, None
+            return True, decision.org_id
+
         def do_GET(self) -> None:
             try:
                 parsed = urlsplit(self.path)
@@ -62,6 +82,9 @@ def create_router_http_server(
                     return
 
                 if path == "/v1/finops/shadow-summary":
+                    ok, _ = self._authorize(required_role=TenantRole.AUDITOR)
+                    if not ok:
+                        return
                     self._send_json(200, gateway.build_shadow_summary())
                     return
 
@@ -69,6 +92,12 @@ def create_router_http_server(
                     query_params = parse_qs(parsed.query, keep_blank_values=False)
                     org_id_values = query_params.get("org_id")
                     org_id = org_id_values[0] if org_id_values else None
+                    ok, _ = self._authorize(
+                        required_role=TenantRole.AUDITOR,
+                        claimed_org_id=org_id,
+                    )
+                    if not ok:
+                        return
                     try:
                         economics = gateway.summarize_economics(org_id=org_id)
                     except ValueError as exc:
@@ -78,6 +107,9 @@ def create_router_http_server(
                     return
 
                 if path == "/metrics":
+                    ok, _ = self._authorize(required_role=TenantRole.AUDITOR)
+                    if not ok:
+                        return
                     spans = gateway.span_exporter.get_spans()
                     summary = (
                         gateway._thermostat.summarize_economics()
@@ -93,6 +125,9 @@ def create_router_http_server(
                     return
 
                 if path == "/dashboard":
+                    ok, _ = self._authorize(required_role=TenantRole.AUDITOR)
+                    if not ok:
+                        return
                     economics_snapshot: dict[str, Any] | None = (
                         gateway.summarize_economics()
                         if gateway._thermostat is not None
@@ -170,6 +205,20 @@ def create_router_http_server(
                         400, {"error": {"message": "Request body must be a JSON object"}}
                     )
                     return
+
+                if gateway.auth_registry is not None:
+                    raw_claimed_org = raw_body.get("x_org_id") or self.headers.get("x-org-id")
+                    claimed_org_id = (
+                        str(raw_claimed_org) if raw_claimed_org is not None else None
+                    )
+                    ok, authed_org_id = self._authorize(
+                        required_role=TenantRole.ROUTER_CLIENT,
+                        claimed_org_id=claimed_org_id,
+                    )
+                    if not ok:
+                        return
+                    if authed_org_id is not None:
+                        raw_body["x_org_id"] = authed_org_id
 
                 for header_name, field_name in _HEADER_TO_FIELD.items():
                     header_val = self.headers.get(header_name)
