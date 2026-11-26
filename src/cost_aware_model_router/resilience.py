@@ -117,6 +117,12 @@ class ProviderCircuitBreaker:
             self._refresh_entry_locked(entry)
             return entry.state
 
+    def snapshot(self) -> dict[ModelTier, CircuitState]:
+        with self._lock:
+            for entry in self._entries.values():
+                self._refresh_entry_locked(entry)
+            return {tier: entry.state for tier, entry in self._entries.items()}
+
 
 def _is_trace_healthy(trace: ExecutionTrace | None) -> bool:
     if trace is None:
@@ -144,6 +150,10 @@ class FallbackChainAdapter:
         self._fallback_order = (
             dict(fallback_order) if fallback_order is not None else dict(DEFAULT_FALLBACK_ORDER)
         )
+
+    @property
+    def circuit_breaker(self) -> ProviderCircuitBreaker:
+        return self._breaker
 
     def _candidate_tiers(self, primary_tier: ModelTier) -> tuple[ModelTier, ...]:
         seen: list[ModelTier] = [primary_tier]

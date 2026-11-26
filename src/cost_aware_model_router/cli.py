@@ -42,6 +42,11 @@ from cost_aware_model_router.receipt import (
     verify_receipt_file,
 )
 from cost_aware_model_router.report import render_pareto_explorer_html
+from cost_aware_model_router.resilience import (
+    CircuitBreakerConfig,
+    FallbackChainAdapter,
+    ProviderCircuitBreaker,
+)
 from cost_aware_model_router.schemas import (
     ModelTier,
     PolicySpec,
@@ -324,6 +329,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional SQLite database path for durable ledger, shadow, and span persistence",
     )
+    serve_p.add_argument(
+        "--enable-fallback",
+        action="store_true",
+        help="Wrap the serve adapter in FallbackChainAdapter with ProviderCircuitBreaker",
+    )
+    serve_p.add_argument(
+        "--circuit-failure-threshold",
+        type=int,
+        default=3,
+        help="Consecutive failures before opening a tier circuit breaker",
+    )
+    serve_p.add_argument(
+        "--bandit-policy-file",
+        type=Path,
+        default=None,
+        help="Optional path to a trained ContextualBanditRouter JSON artifact (from train-bandit)",
+    )
 
     return parser
 
@@ -532,6 +554,9 @@ def _build_gateway_for_serve(
     shadow_policy_id: str | None = None,
     hourly_budget_usd: Decimal | None = None,
     store: SQLiteEconomicsStore | None = None,
+    enable_fallback: bool = False,
+    circuit_failure_threshold: int = 3,
+    bandit_policy_file: Path | None = None,
 ) -> OpenAIRouterGateway:
     suite = default_policy_suite()
     policies_by_id = {p.policy_id: p for p in suite}
@@ -562,14 +587,32 @@ def _build_gateway_for_serve(
             ]
         )
 
+    adapter: ProviderAdapter = (
+        FallbackChainAdapter(
+            inner=DeterministicFixtureAdapter(),
+            breaker=ProviderCircuitBreaker(
+                config=CircuitBreakerConfig(failure_threshold=circuit_failure_threshold)
+            ),
+        )
+        if enable_fallback
+        else DeterministicFixtureAdapter()
+    )
+
+    bandit_router = (
+        ContextualBanditRouter.from_json(bandit_policy_file.read_text(encoding="utf-8"))
+        if bandit_policy_file is not None
+        else None
+    )
+
     return OpenAIRouterGateway(
-        adapter=DeterministicFixtureAdapter(),
+        adapter=adapter,
         catalog=load_bundled_catalog(),
         primary_policy=primary_policy,
         shadow_policy=shadow_policy,
         policies=suite,
         thermostat=thermostat,
         store=store,
+        bandit_router=bandit_router,
     )
 
 
@@ -711,6 +754,9 @@ def main(argv: list[str] | None = None) -> int:
                 shadow_policy_id=args.shadow_policy,
                 hourly_budget_usd=args.hourly_budget_usd,
                 store=store,
+                enable_fallback=args.enable_fallback,
+                circuit_failure_threshold=args.circuit_failure_threshold,
+                bandit_policy_file=args.bandit_policy_file,
             )
             server = create_router_http_server(gateway, host=args.host, port=args.port)
         except Exception as exc:
