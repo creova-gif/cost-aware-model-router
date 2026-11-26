@@ -1,0 +1,8 @@
+# Default code owner for all files
+* @creova-gif
+
+# Security-critical governance, provider egress, CI workflows, and security policy
+/src/cost_aware_model_router/governance.py @creova-gif
+/src/cost_aware_model_router/adapters.py @creova-gif
+/.github/workflows/ @creova-gif
+/SECURITY.md @creova-gif
