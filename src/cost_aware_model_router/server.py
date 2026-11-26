@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from cost_aware_model_router.dashboard import render_live_finops_dashboard_html
 from cost_aware_model_router.gateway import (
     ChatCompletionRequest,
+    ChatCompletionResponse,
     OpenAIRouterGateway,
     ThermostatBlockedError,
 )
@@ -45,6 +46,45 @@ def _resolve_request_id(headers: Message[str, str] | Mapping[str, str]) -> str:
     ):
         return raw
     return uuid.uuid4().hex
+
+
+def _render_sse_chat_completion(chat_resp: ChatCompletionResponse) -> bytes:
+    """Format a ChatCompletionResponse as OpenAI-compatible Server-Sent Events frames."""
+    content = chat_resp.choices[0].message.content if chat_resp.choices else ""
+    first_chunk = {
+        "id": chat_resp.id,
+        "object": "chat.completion.chunk",
+        "created": chat_resp.created,
+        "model": chat_resp.model,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": content},
+                "finish_reason": None,
+            }
+        ],
+    }
+    final_chunk = {
+        "id": chat_resp.id,
+        "object": "chat.completion.chunk",
+        "created": chat_resp.created,
+        "model": chat_resp.model,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": chat_resp.usage.model_dump(mode="json"),
+        "x_router_metadata": chat_resp.router_metadata.model_dump(mode="json"),
+    }
+    frames = [
+        f"data: {json.dumps(first_chunk, separators=(',', ':'))}\n\n",
+        f"data: {json.dumps(final_chunk, separators=(',', ':'))}\n\n",
+        "data: [DONE]\n\n",
+    ]
+    return "".join(frames).encode("utf-8")
 
 
 def _build_circuits_snapshot(gateway: OpenAIRouterGateway) -> dict[str, Any]:
@@ -519,7 +559,14 @@ def create_router_http_server(
                     self._send_json(400, {"error": {"message": str(exc)}})
                     return
 
-                self._send_json(200, chat_resp.model_dump(mode="json"))
+                if chat_req.stream:
+                    self._send_bytes(
+                        200,
+                        "text/event-stream; charset=utf-8",
+                        _render_sse_chat_completion(chat_resp),
+                    )
+                else:
+                    self._send_json(200, chat_resp.model_dump(mode="json"))
             except Exception:
                 self._send_json(500, {"error": {"message": "Internal server error"}})
 
