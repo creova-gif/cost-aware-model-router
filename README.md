@@ -473,6 +473,8 @@ pytest -q
 
 ## Architecture, Design & Security Documentation
 
+- **Enterprise API Reference:** [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
+- **Production Deployment Guide:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - **System Design & Engineering Review Record:** [docs/designs/cost-aware-model-router-m1.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/designs/cost-aware-model-router-m1.md)
 - **ADR-000 (Architecture Decision Record Template):** [docs/adr/000-template.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/000-template.md)
 - **ADR-001 (Milestone 1 — Hexagonal Core, Per-Metric Provenance & 2D Pareto Savings Receipt):** [docs/adr/001-milestone-1-pareto-replay-and-provenance.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/001-milestone-1-pareto-replay-and-provenance.md)
