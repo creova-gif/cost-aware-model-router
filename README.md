@@ -106,7 +106,7 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 | [schemas.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/schemas.py) | Pydantic v2 domain models (`WorkloadItem`, `ExecutionTrace`, `EvalVerdict`, `MetricProvenance`, `PolicySpec`, `PolicyResult`, `SavingsReceipt`) with 8-place `UsdDecimal` serialization and `extra="forbid"`. |
 | [adapters.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/adapters.py) | `ProviderAdapter` protocol, bundled 60-prompt workload generator, `DeterministicFixtureAdapter`, and hardened async `OpenAICompatibleAdapter` + `AnthropicAdapter` (`Semaphore(8)`, `--max-cost-usd` breaker, non-loopback `http://` auth block, `follow_redirects=False`). |
 | [registry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/registry.py) | `MultiProviderAdapter` for concurrent heterogeneous 3-tier routing (`tier_adapters` overrides, `TierModelSpec.provider` mapping, `fallback_adapter`, and `ProvenanceTag.UNKNOWN` fallback for unconfigured tiers). |
-| [resilience.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/resilience.py) | `ProviderCircuitBreaker` (`CLOSED -> OPEN -> HALF_OPEN -> CLOSED`), `FallbackChainAdapter` for provenance-safe cross-tier fallback, and `BoundedTTLCache` for O(1) LRU + TTL semantic caching. |
+| [resilience.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/resilience.py) | `ProviderCircuitBreaker` (`CLOSED -> OPEN -> HALF_OPEN -> CLOSED`, `reset()`), `FallbackChainAdapter` for provenance-safe cross-tier fallback, and `BoundedTTLCache` for O(1) LRU + TTL semantic caching. |
 | [evaluators.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/evaluators.py) | Declarative evaluator engine (`json_schema`, ReDoS-guarded `regex_match`, `exact_match`, `json_field_predicate`, `latency_sla`) separating `content_passed` from `latency_passed`. |
 | [policies.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/policies.py) | Complete-case `UNKNOWN` intersection, deployable policies (`static_tier`, `complexity_threshold`, `cascade_escalation`), `ear_oracle` hindsight benchmark, and exact 2D Pareto frontier solver (`compute_2d_pareto_frontier`, `select_policy_for_floor`). |
 | [receipt.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/receipt.py) | Canonical JSON serializer (`allow_nan=False`, sorted UTF-8 keys, fixed-precision strings), SHA-256 `SavingsReceipt` builder, Markdown renderer, and raw-dict-first `verify_receipt_file()`. |
@@ -119,9 +119,9 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 | [telemetry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/telemetry.py) | OpenTelemetry `gen_ai.*` and `cost_router.*` span instrumentation (`OTelSpanRecord`, `InMemorySpanExporter`), declarative policy loader (`load_policies_from_json`), and stratified holdout splitting (`split_workload_holdout`). |
 | [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py) | Zero-dependency Prometheus `0.0.4` / OpenMetrics text exporter (`render_prometheus_metrics`) with label-value escaping (`escape_prometheus_label_value`) for `GET /metrics`. |
 | [judge.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/judge.py) | `LLMJudge` protocol, `DeterministicRubricJudge`, and `OutOfSamplePolicyAuditor` for train/holdout policy generalization audits (`HoldoutGeneralizationReport`). |
-| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `ThreadingHTTPServer` (`create_router_http_server`) exposing `/healthz`, `/readyz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `/metrics`, and `/dashboard`, with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`). |
-| [store.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/store.py) | Thread-safe WAL-mode `SQLiteEconomicsStore` for durable persistence of `SpendLedgerEntry`, `ShadowComparisonRecord`, and `OTelSpanRecord` with 8-place USD string precision and `SpendSummary` aggregation. |
-| [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, `cost-router train-bandit`, `cost-router issue-key`, `cost-router revoke-key`, and `cost-router serve`. |
+| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `_RouterHTTPServer` (`ThreadingHTTPServer` + shared `_AsyncLoopRunner` background event loop via `create_router_http_server`) exposing `/healthz`, `/readyz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `POST /v1/finops/circuits/reset` (`ADMIN`), `/metrics`, and `/dashboard`, with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`). |
+| [store.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/store.py) | Thread-safe WAL-mode `SQLiteEconomicsStore` for durable persistence of `SpendLedgerEntry`, `ShadowComparisonRecord`, and `OTelSpanRecord` with 8-place USD string precision, `SpendSummary` aggregation, `is_healthy()` readiness probe, and `prune_older_than()` telemetry retention pruning. |
+| [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, `cost-router train-bandit`, `cost-router issue-key`, `cost-router revoke-key`, `cost-router prune-db`, and `cost-router serve`. |
 
 ---
 
@@ -345,6 +345,11 @@ curl -s "http://127.0.0.1:8080/v1/finops/economics?org_id=org_demo"
 # Per-tier circuit breaker health snapshot (AUDITOR role)
 curl -s http://127.0.0.1:8080/v1/finops/circuits
 
+# Reset one or all tier circuit breakers to CLOSED (ADMIN role)
+curl -s -X POST http://127.0.0.1:8080/v1/finops/circuits/reset \
+  -H "Content-Type: application/json" \
+  -d '{"tier":"frontier"}'
+
 # Prometheus / OpenMetrics scrape endpoint
 curl -s http://127.0.0.1:8080/metrics
 
@@ -388,6 +393,9 @@ cost-router serve \
   --bandit-policy-file ./artifacts/bandit/bandit-policy.json \
   --auth-config ./artifacts/auth-config.json
 cost-router serve --live --provider anthropic --api-key-env ANTHROPIC_API_KEY --max-cost-usd 5.00000000
+
+# 5. Prune expired shadow_comparisons and otel_spans from SQLite while preserving spend_ledger totals
+cost-router prune-db --db ./artifacts/router-economics.db --max-age-seconds 604800
 ```
 
 ---
@@ -440,6 +448,7 @@ pytest -q
 - **ADR-008 (OpenAI `/v1/models` Discovery, Circuit Observability & `serve` Resilience/Bandit Wiring):** [docs/adr/008-openai-models-discovery-and-circuit-observability.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/008-openai-models-discovery-and-circuit-observability.md)
 - **ADR-009 (Enterprise Auth Config, Readiness Probes, Correlation Headers & Dashboard Circuit Health):** [docs/adr/009-enterprise-auth-config-readiness-and-correlation.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/009-enterprise-auth-config-readiness-and-correlation.md)
 - **ADR-010 (Live Serve Provider Wiring, Key Revocation, Graceful Shutdown & Store Readiness):** [docs/adr/010-live-serve-provider-and-store-readiness.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/010-live-serve-provider-and-store-readiness.md)
+- **ADR-011 (Shared Event Loop, Bounded Store Retention Pruning & Circuit Breaker Reset):** [docs/adr/011-shared-event-loop-retention-and-circuit-reset.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/011-shared-event-loop-retention-and-circuit-reset.md)
 - **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **Changelog (Release History):** [CHANGELOG.md](CHANGELOG.md)
 - **STRIDE Threat Model & AI-Router Security Mitigations:** [docs/THREAT_MODEL.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/THREAT_MODEL.md)
