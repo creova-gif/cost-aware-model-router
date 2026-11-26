@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import sqlite3
 import threading
@@ -22,6 +23,7 @@ from cost_aware_model_router.schemas import (
 from cost_aware_model_router.telemetry import OTelSpanRecord
 from cost_aware_model_router.thermostat import SpendLedgerEntry, SpendSummary
 
+_logger = logging.getLogger(__name__)
 _ZERO_USD = Decimal("0.00000000")
 
 _CREATE_SPEND_LEDGER_TABLE = """
@@ -518,13 +520,19 @@ class SQLiteEconomicsStore:
                 return False
 
     def close(self) -> None:
-        """Close the underlying SQLite connection idempotently."""
+        """Checkpoint WAL frames and close the underlying SQLite connection idempotently."""
         with self._lock:
             if not self._closed:
+                try:
+                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.Error as exc:
+                    _logger.debug("WAL checkpoint on close skipped: %s", exc)
                 self._conn.close()
                 self._closed = True
 
     def __enter__(self) -> SQLiteEconomicsStore:
+        with self._lock:
+            self._ensure_open()
         return self
 
     def __exit__(
