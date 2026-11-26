@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-26
+
 ### Added
 
 - **OpenAI Model Discovery & Circuit Observability (`server.py`, `resilience.py`):**
@@ -35,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `SQLiteEconomicsStore.prune_older_than()` and `cost-router prune-db` to prune old `shadow_comparisons` and `otel_spans` rows while preserving `spend_ledger` totals.
   - Added `ProviderCircuitBreaker.reset()` and `POST /v1/finops/circuits/reset` (`TenantRole.ADMIN` RBAC) to reset one or all tier circuits to `CLOSED`.
   - Documented these decisions in `docs/adr/011-shared-event-loop-retention-and-circuit-reset.md` (`ADR-011`).
+- **Prometheus Circuit Gauge, CLI Version Flag & Docker Compose (`metrics.py`, `cli.py`, `docker-compose.yml`):**
+  - Added `cost_router_circuit_state{tier="..."}` Prometheus gauge (`0=closed`, `1=half_open`, `2=open`) to `render_prometheus_metrics` and `GET /metrics`.
+  - Added `cost-router --version` / `-V` CLI flag reporting the installed package version.
+  - Added `docker-compose.yml` and container operations documentation in `README.md`.
 
 ## [0.3.0] - 2026-11-26
 
