@@ -7,6 +7,7 @@ import json
 import math
 import os
 import signal
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -530,6 +531,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=168.0,
         help="Delete shadow_comparisons and otel_spans older than this many hours (default: 168.0)",
+    )
+
+    backup_p = sub.add_parser(
+        "backup-db",
+        help="Create a lock-safe online SQLite backup of a SQLiteEconomicsStore database",
+    )
+    backup_p.add_argument(
+        "--db-path",
+        type=Path,
+        required=True,
+        help="Path to SQLiteEconomicsStore database",
+    )
+    backup_p.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Destination path for the SQLite backup file",
     )
 
     return parser
@@ -1088,6 +1106,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"max_age_hours={args.max_age_hours}")
         print(f"shadow_comparisons_deleted={deleted['shadow_comparisons']}")
         print(f"otel_spans_deleted={deleted['otel_spans']}")
+        return 0
+
+    if args.command == "backup-db":
+        backup_store: SQLiteEconomicsStore | None = None
+        try:
+            backup_store = SQLiteEconomicsStore(args.db_path)
+            backup_path = backup_store.backup_to(args.out)
+            backup_bytes = backup_path.stat().st_size
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            print(f"Database backup failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            if backup_store is not None:
+                backup_store.close()
+        print(f"db_path={args.db_path}")
+        print(f"backup_path={backup_path}")
+        print(f"bytes={backup_bytes}")
         return 0
 
     if args.command == "serve":

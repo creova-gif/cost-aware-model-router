@@ -508,6 +508,19 @@ class SQLiteEconomicsStore:
             "otel_spans": spans_cur.rowcount,
         }
 
+    def backup_to(self, dest_path: Path | str) -> Path:
+        """Create a lock-safe online SQLite backup at dest_path and return the target Path."""
+        target = Path(dest_path)
+        with self._lock:
+            self._ensure_open()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            dest_conn = sqlite3.connect(target)
+            try:
+                self._conn.backup(dest_conn)
+            finally:
+                dest_conn.close()
+        return target
+
     def is_healthy(self) -> bool:
         """Return True if the store is open and responds to a lightweight SQLite query."""
         with self._lock:
