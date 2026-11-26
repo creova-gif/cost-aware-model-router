@@ -17,6 +17,8 @@ from cost_aware_model_router.adapters import (
     ProviderAdapter,
     load_bundled_catalog,
 )
+from cost_aware_model_router.governance import TenantAuthRegistry, TenantRole
+from cost_aware_model_router.learner import ContextualBanditRouter
 from cost_aware_model_router.metrics import render_prometheus_metrics
 from cost_aware_model_router.policies import default_policy_suite
 from cost_aware_model_router.schemas import (
@@ -319,6 +321,8 @@ class OpenAIRouterGateway:
         span_exporter: InMemorySpanExporter | None = None,
         thermostat: AgentBudgetThermostat | None = None,
         store: SQLiteEconomicsStore | None = None,
+        bandit_router: ContextualBanditRouter | None = None,
+        auth_registry: TenantAuthRegistry | None = None,
         shadow_log_path: Path | None = None,
         default_org_id: str = "org_demo",
         default_agent_id: str = "agent_gateway",
@@ -341,6 +345,8 @@ class OpenAIRouterGateway:
         self._span_exporter = span_exporter or InMemorySpanExporter()
         self._thermostat = thermostat
         self._store = store
+        self._bandit_router = bandit_router
+        self._auth_registry = auth_registry
         self._shadow_log_path = shadow_log_path
         self._default_org_id = default_org_id
         self._default_agent_id = default_agent_id
@@ -351,6 +357,10 @@ class OpenAIRouterGateway:
     @property
     def span_exporter(self) -> InMemorySpanExporter:
         return self._span_exporter
+
+    @property
+    def auth_registry(self) -> TenantAuthRegistry | None:
+        return self._auth_registry
 
     def get_shadow_records(self) -> list[ShadowComparisonRecord]:
         with self._lock:
@@ -391,7 +401,11 @@ class OpenAIRouterGateway:
             seq_num=seq,
         )
 
-        primary_tier, _ = _select_tier_for_policy(workload_item, primary_spec)
+        if self._bandit_router is not None and request.x_policy_id is None:
+            with self._lock:
+                primary_tier, _ = self._bandit_router.select_tier(workload_item)
+        else:
+            primary_tier, _ = _select_tier_for_policy(workload_item, primary_spec)
         effective_tier = primary_tier
         thermostat_action_val: str | None = None
         seed_key = f"{workload_item.request_id}:{seq}:{primary_spec.policy_id}"
@@ -497,6 +511,15 @@ class OpenAIRouterGateway:
         )
         primary_trace = traces[(workload_item.request_id, effective_tier)]
         end_ns = max(start_ns + int(primary_trace.latency_ms * 1_000_000), time.time_ns())
+
+        if self._bandit_router is not None and request.x_policy_id is None:
+            with self._lock:
+                self._bandit_router.update(
+                    workload_item,
+                    effective_tier,
+                    passed=True,
+                    cost_usd=primary_trace.cost_usd,
+                )
 
         ledger_entry: SpendLedgerEntry | None = None
         if self._thermostat is not None:
@@ -667,6 +690,29 @@ class OpenAIRouterGateway:
         return create_asgi_or_httpx_app(self)
 
 
+def _check_httpx_auth(
+    gateway: OpenAIRouterGateway,
+    request: httpx.Request,
+    *,
+    required_role: TenantRole,
+    claimed_org_id: str | None = None,
+) -> tuple[str | None, httpx.Response | None]:
+    registry = gateway.auth_registry
+    if registry is None:
+        return None, None
+    decision = registry.authenticate_and_authorize(
+        request.headers.get("authorization"),
+        required_role=required_role,
+        claimed_org_id=claimed_org_id,
+    )
+    if not decision.authenticated or not decision.authorized or decision.rate_limited:
+        return None, httpx.Response(
+            status_code=decision.status_code,
+            json={"error": {"message": decision.reason}},
+        )
+    return decision.org_id, None
+
+
 def create_asgi_or_httpx_app(gateway: OpenAIRouterGateway) -> httpx.MockTransport:
     """
     Create an in-process httpx.MockTransport handler for POST /v1/chat/completions
@@ -685,6 +731,22 @@ def create_asgi_or_httpx_app(gateway: OpenAIRouterGateway) -> httpx.MockTranspor
                         status_code=400,
                         json={"error": {"message": "Request body must be a JSON object"}},
                     )
+                if gateway.auth_registry is not None:
+                    raw_claimed_org = raw_body.get("x_org_id") or request.headers.get("x-org-id")
+                    claimed_org_id = (
+                        str(raw_claimed_org) if raw_claimed_org is not None else None
+                    )
+                    authed_org_id, auth_err = _check_httpx_auth(
+                        gateway,
+                        request,
+                        required_role=TenantRole.ROUTER_CLIENT,
+                        claimed_org_id=claimed_org_id,
+                    )
+                    if auth_err is not None:
+                        return auth_err
+                    if authed_org_id is not None:
+                        raw_body["x_org_id"] = authed_org_id
+
                 header_map = {
                     "x-org-id": "x_org_id",
                     "x-agent-id": "x_agent_id",
@@ -721,14 +783,29 @@ def create_asgi_or_httpx_app(gateway: OpenAIRouterGateway) -> httpx.MockTranspor
                 )
 
         if method == "GET" and path == "/v1/finops/shadow-summary":
+            _, auth_err = _check_httpx_auth(
+                gateway,
+                request,
+                required_role=TenantRole.AUDITOR,
+            )
+            if auth_err is not None:
+                return auth_err
             return httpx.Response(
                 status_code=200,
                 json=gateway.build_shadow_summary(),
             )
 
         if method == "GET" and path == "/v1/finops/economics":
+            org_id = request.url.params.get("org_id")
+            _, auth_err = _check_httpx_auth(
+                gateway,
+                request,
+                required_role=TenantRole.AUDITOR,
+                claimed_org_id=org_id,
+            )
+            if auth_err is not None:
+                return auth_err
             try:
-                org_id = request.url.params.get("org_id")
                 return httpx.Response(
                     status_code=200,
                     json=gateway.summarize_economics(org_id=org_id),
@@ -740,6 +817,13 @@ def create_asgi_or_httpx_app(gateway: OpenAIRouterGateway) -> httpx.MockTranspor
                 )
 
         if method == "GET" and path == "/metrics":
+            _, auth_err = _check_httpx_auth(
+                gateway,
+                request,
+                required_role=TenantRole.AUDITOR,
+            )
+            if auth_err is not None:
+                return auth_err
             spans = gateway.span_exporter.get_spans()
             summary = (
                 gateway._thermostat.summarize_economics()
