@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from cost_aware_model_router.adapters import (
+    AnthropicAdapter,
+    DeterministicFixtureAdapter,
+    OpenAICompatibleAdapter,
+    ProviderAdapter,
+)
 from cost_aware_model_router.gateway import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -16,6 +22,7 @@ from cost_aware_model_router.judge import (
     OutOfSamplePolicyAuditor,
     RubricCriterion,
 )
+from cost_aware_model_router.metrics import render_prometheus_metrics
 from cost_aware_model_router.schemas import (
     ModelTier,
     PolicyKind,
@@ -27,6 +34,7 @@ from cost_aware_model_router.schemas import (
     TaskCategory,
     WorkloadItem,
 )
+from cost_aware_model_router.server import create_router_http_server
 from cost_aware_model_router.telemetry import InMemorySpanExporter, OTelSpanRecord
 from cost_aware_model_router.thermostat import (
     AgentBudgetThermostat,
@@ -44,10 +52,12 @@ def healthcheck() -> str:
 
 __all__ = [
     "AgentBudgetThermostat",
+    "AnthropicAdapter",
     "BudgetPolicy",
     "ChatCompletionRequest",
     "ChatCompletionResponse",
     "ChatMessage",
+    "DeterministicFixtureAdapter",
     "DeterministicRubricJudge",
     "HoldoutGeneralizationReport",
     "InMemorySpanExporter",
@@ -55,6 +65,7 @@ __all__ = [
     "LLMJudge",
     "ModelTier",
     "OTelSpanRecord",
+    "OpenAICompatibleAdapter",
     "OpenAIRouterGateway",
     "OutOfSamplePolicyAuditor",
     "PolicyKind",
@@ -62,6 +73,7 @@ __all__ = [
     "PolicySpec",
     "PricingCatalog",
     "ProvenanceTag",
+    "ProviderAdapter",
     "RubricCriterion",
     "SavingsReceipt",
     "ShadowComparisonRecord",
@@ -72,5 +84,7 @@ __all__ = [
     "ThermostatBlockedError",
     "ThermostatDecision",
     "WorkloadItem",
+    "create_router_http_server",
     "healthcheck",
+    "render_prometheus_metrics",
 ]

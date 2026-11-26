@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from cost_aware_model_router.adapters import (
+    AnthropicAdapter,
     DeterministicFixtureAdapter,
     OpenAICompatibleAdapter,
     ProviderAdapter,
@@ -191,13 +192,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--quality-floor", type=float, default=0.92, help="Minimum pass rate floor q_min"
     )
     replay_p.add_argument(
-        "--live", action="store_true", help="Execute against live OpenAI-compatible HTTP endpoint"
+        "--live", action="store_true", help="Execute against live LLM HTTP endpoint"
+    )
+    replay_p.add_argument(
+        "--provider",
+        choices=["openai", "anthropic"],
+        default="openai",
+        help="Live LLM provider adapter to use with --live (default: openai)",
     )
     replay_p.add_argument(
         "--base-url",
         type=str,
         default="https://api.openai.com/v1",
-        help="OpenAI-compatible base URL",
+        help="Provider API base URL",
     )
     replay_p.add_argument(
         "--api-key-env", type=str, default="OPENAI_API_KEY", help="Env var holding API key"
@@ -514,23 +521,43 @@ def main(argv: list[str] | None = None) -> int:
                 if args.catalog is not None
                 else load_bundled_catalog()
             )
+            replay_adapter: ProviderAdapter
             if args.live:
-                api_key = os.environ.get(args.api_key_env)
-                adapter = OpenAICompatibleAdapter(
-                    base_url=args.base_url,
-                    api_key=api_key,
-                    max_concurrency=args.concurrency,
-                    max_cost_usd=Decimal(args.max_cost_usd),
-                )
+                if args.provider == "anthropic":
+                    api_key_env = (
+                        "ANTHROPIC_API_KEY"
+                        if args.api_key_env == "OPENAI_API_KEY"
+                        else args.api_key_env
+                    )
+                    base_url = (
+                        "https://api.anthropic.com"
+                        if args.base_url == "https://api.openai.com/v1"
+                        else args.base_url
+                    )
+                    api_key = os.environ.get(api_key_env)
+                    replay_adapter = AnthropicAdapter(
+                        base_url=base_url,
+                        api_key=api_key,
+                        max_concurrency=args.concurrency,
+                        max_cost_usd=Decimal(args.max_cost_usd),
+                    )
+                else:
+                    api_key = os.environ.get(args.api_key_env)
+                    replay_adapter = OpenAICompatibleAdapter(
+                        base_url=args.base_url,
+                        api_key=api_key,
+                        max_concurrency=args.concurrency,
+                        max_cost_usd=Decimal(args.max_cost_usd),
+                    )
             else:
-                adapter = DeterministicFixtureAdapter()
+                replay_adapter = DeterministicFixtureAdapter()
 
             receipt = asyncio.run(
                 run_pipeline(
                     workload_name=args.workload.name,
                     workload=workload,
                     catalog=catalog,
-                    adapter=adapter,
+                    adapter=replay_adapter,
                     out_dir=args.out,
                     quality_floor=args.quality_floor,
                     policies=custom_policies,
