@@ -28,10 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Guarded `SQLiteEconomicsStore.__enter__` with `_ensure_open()` to reject re-entering a closed store, and executed `PRAGMA wal_checkpoint(TRUNCATE)` on `SQLiteEconomicsStore.close()`.
   - Added enterprise repository governance (`SECURITY.md`, `CODEOWNERS`, `.env.example`, `.github/dependabot.yml`) and performance regression tests.
   - Documented these decisions in `docs/adr/015-wcag-accessibility-and-wal-lifecycle.md` (`ADR-015`).
-- **Security Headers, OpenAI SDK Interoperability & CI Smoke Checks (`server.py`, `gateway.py`, `.github/workflows/ci.yml`):**
-  - Added `Content-Security-Policy` and `Permissions-Policy` HTTP security headers to server responses.
-  - Added OpenAI SDK `top_p`, `stop`, `user`, and `seed` request interoperability fields on `POST /v1/chat/completions`.
+- **Security Headers, OpenAI SDK Interoperability, OpenAPI `3.1.0` Spec & CI Smoke Checks (`server.py`, `gateway.py`, `.github/workflows/ci.yml`):**
+  - Added `Permissions-Policy` (`geolocation=(), microphone=(), camera=()`) to all HTTP responses and a strict `Content-Security-Policy` header to `GET /dashboard`.
+  - Added OpenAI SDK optional interoperability fields (`top_p`, `stop`, `user`, `seed`) on `ChatCompletionRequest` (`POST /v1/chat/completions`) while preserving `extra="forbid"`.
+  - Added the OpenAPI `3.1.0` specification endpoint (`GET /openapi.json`) and single-model lookup endpoint (`GET /v1/models/{model_id}`).
   - Expanded `.github/workflows/ci.yml` smoke checks to run `cost-router --version` and `cost-router train-bandit --epochs 2 --out ./artifacts/ci-demo/bandit`.
+  - Documented these decisions in `docs/adr/016-csp-openai-interop-and-openapi-spec.md` (`ADR-016`).
 
 ## [0.4.0] - 2026-11-26
 

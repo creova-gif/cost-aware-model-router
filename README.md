@@ -119,7 +119,7 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 | [telemetry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/telemetry.py) | OpenTelemetry `gen_ai.*` and `cost_router.*` span instrumentation (`OTelSpanRecord`, `InMemorySpanExporter`), declarative policy loader (`load_policies_from_json`), and stratified holdout splitting (`split_workload_holdout`). |
 | [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py) | Zero-dependency Prometheus `0.0.4` / OpenMetrics text exporter (`render_prometheus_metrics`) with label-value escaping (`escape_prometheus_label_value`) for `GET /metrics`. |
 | [judge.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/judge.py) | `LLMJudge` protocol, `DeterministicRubricJudge`, and `OutOfSamplePolicyAuditor` for train/holdout policy generalization audits (`HoldoutGeneralizationReport`). |
-| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `_RouterHTTPServer` (`ThreadingHTTPServer` + shared `_AsyncLoopRunner` background event loop via `create_router_http_server`) exposing `GET`/`HEAD` `/healthz`, `GET`/`HEAD` `/readyz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (JSON + `stream=True` SSE `chat.completion.chunk` with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `POST /v1/finops/circuits/reset` (`ADMIN`), `/metrics`, and `/dashboard`, with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`). |
+| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `_RouterHTTPServer` (`ThreadingHTTPServer` + shared `_AsyncLoopRunner` background event loop via `create_router_http_server`) exposing `GET`/`HEAD` `/healthz`, `GET`/`HEAD` `/readyz`, `GET /openapi.json` (OpenAPI `3.1.0`), `/v1/models` and `/v1/models/{model_id}` (`ROUTER_CLIENT`), `/v1/chat/completions` (JSON + `stream=True` SSE `chat.completion.chunk` with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `POST /v1/finops/circuits/reset` (`ADMIN`), `/metrics`, and `/dashboard` (strict `Content-Security-Policy`), with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cache-Control`). |
 | [store.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/store.py) | Thread-safe WAL-mode `SQLiteEconomicsStore` for durable persistence of `SpendLedgerEntry`, `ShadowComparisonRecord`, and `OTelSpanRecord` with 8-place USD string precision, `SpendSummary` aggregation, `is_healthy()` readiness probe, and `prune_older_than()` telemetry retention pruning. |
 | [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, `cost-router train-bandit`, `cost-router issue-key`, `cost-router list-keys`, `cost-router rotate-key`, `cost-router revoke-key`, `cost-router prune-db`, and `cost-router serve`. |
 
@@ -329,7 +329,7 @@ cost-router serve \
   --max-cost-usd 5.00000000
 ```
 
-All HTTP responses include `X-Request-Id` correlation (propagating a valid incoming `X-Request-Id` or generating a UUID4 hex ID) and baseline security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`). Rate-limited `429` responses include the standard `Retry-After: 1` header.
+All HTTP responses include `X-Request-Id` correlation (propagating a valid incoming `X-Request-Id` or generating a UUID4 hex ID) and baseline security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy: geolocation=(), microphone=(), camera=()`, `Cache-Control: no-store`), while `GET /dashboard` additionally sets a strict `Content-Security-Policy`. Rate-limited `429` responses include the standard `Retry-After: 1` header.
 
 Query the running server with `curl`:
 
@@ -342,8 +342,12 @@ curl -s -I http://127.0.0.1:8080/healthz
 curl -s -i http://127.0.0.1:8080/readyz
 curl -s -I http://127.0.0.1:8080/readyz
 
-# OpenAI-compatible model discovery (ROUTER_CLIENT role)
+# OpenAPI 3.1.0 specification
+curl -s http://127.0.0.1:8080/openapi.json
+
+# OpenAI-compatible model discovery and single-model lookup (ROUTER_CLIENT role)
 curl -s http://127.0.0.1:8080/v1/models
+curl -s http://127.0.0.1:8080/v1/models/auto
 
 # OpenAI-compatible chat completion (1 MiB max body size; returns 413 if exceeded)
 curl -s -X POST http://127.0.0.1:8080/v1/chat/completions \
@@ -486,6 +490,7 @@ pytest -q
 - **ADR-013 (HTTP `HEAD` Probe Support & Atomic Tenant Key Rotation):** [docs/adr/013-head-probes-and-key-rotation.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/013-head-probes-and-key-rotation.md)
 - **ADR-014 (OpenAI-Compatible SSE Streaming & Atomic `0o600` Auth-Config Writes):** [docs/adr/014-openai-sse-streaming-and-atomic-auth-writes.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/014-openai-sse-streaming-and-atomic-auth-writes.md)
 - **ADR-015 (WCAG 2.1 AA Accessibility, SQLite WAL Lifecycle & Enterprise Governance):** [docs/adr/015-wcag-accessibility-and-wal-lifecycle.md](docs/adr/015-wcag-accessibility-and-wal-lifecycle.md)
+- **ADR-016 (Security Headers, OpenAI SDK Interoperability & OpenAPI 3.1.0 Specification):** [docs/adr/016-csp-openai-interop-and-openapi-spec.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/016-csp-openai-interop-and-openapi-spec.md)
 - **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **Security Policy (Vulnerability Disclosure & Response SLA):** [SECURITY.md](SECURITY.md)
 - **Environment Configuration Template (Zero-Secret Reference):** [.env.example](.env.example)
