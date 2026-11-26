@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added the OpenAPI `3.1.0` specification endpoint (`GET /openapi.json`) and single-model lookup endpoint (`GET /v1/models/{model_id}`).
   - Expanded `.github/workflows/ci.yml` smoke checks to run `cost-router --version` and `cost-router train-bandit --epochs 2 --out ./artifacts/ci-demo/bandit`.
   - Documented these decisions in `docs/adr/016-csp-openai-interop-and-openapi-spec.md` (`ADR-016`).
+- **SQLite Online Backup, Disaster Recovery & Enterprise Docs (`store.py`, `cli.py`, `docs/`):**
+  - Added `SQLiteEconomicsStore.backup_to()` using `sqlite3.Connection.backup()` under `self._lock` for consistent, lock-safe online backups of WAL-mode economics databases, exposed via `cost-router backup-db`.
+  - Added `docs/API_REFERENCE.md` and `docs/DEPLOYMENT.md` covering HTTP endpoints, authentication, and production deployment workflows.
+  - Documented the online backup and disaster-recovery design in `docs/adr/017-sqlite-online-backup-and-disaster-recovery.md` (`ADR-017`).
 
 ## [0.4.0] - 2026-11-26
 
