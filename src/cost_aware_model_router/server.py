@@ -10,7 +10,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from cost_aware_model_router.dashboard import render_live_finops_dashboard_html
 from cost_aware_model_router.gateway import (
@@ -21,6 +21,7 @@ from cost_aware_model_router.gateway import (
 )
 from cost_aware_model_router.governance import TenantRole
 from cost_aware_model_router.metrics import render_prometheus_metrics
+from cost_aware_model_router.openapi import build_openapi_spec
 from cost_aware_model_router.resilience import CircuitState, ProviderCircuitBreaker
 from cost_aware_model_router.schemas import ModelTier
 
@@ -321,6 +322,10 @@ def create_router_http_server(
                     self._send_json(200, {"status": "ready"})
                     return
 
+                if path == "/openapi.json":
+                    self._send_json(200, build_openapi_spec())
+                    return
+
                 if path == "/v1/models":
                     ok, _ = self._authorize(required_role=TenantRole.ROUTER_CLIENT)
                     if not ok:
@@ -340,6 +345,26 @@ def create_router_http_server(
                             ],
                         },
                     )
+                    return
+
+                if path.startswith("/v1/models/") and len(path) > len("/v1/models/"):
+                    ok, _ = self._authorize(required_role=TenantRole.ROUTER_CLIENT)
+                    if not ok:
+                        return
+                    model_id = unquote(path[len("/v1/models/") :])
+                    for tier, spec in gateway.catalog.models.items():
+                        if spec.model_id == model_id:
+                            self._send_json(
+                                200,
+                                {
+                                    "id": spec.model_id,
+                                    "object": "model",
+                                    "owned_by": spec.provider,
+                                    "tier": tier.value,
+                                },
+                            )
+                            return
+                    self._send_json(404, {"error": {"message": f"Model {model_id!r} not found"}})
                     return
 
                 if path == "/v1/finops/circuits":
