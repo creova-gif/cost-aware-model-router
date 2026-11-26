@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added OpenAI-compatible `stream=True` Server-Sent Events (`text/event-stream; charset=utf-8`) framing on `POST /v1/chat/completions`, emitting `chat.completion.chunk` events followed by `data: [DONE]\n\n` while preserving thermostat, shadow-mode, and OTel accounting.
   - Added `_write_auth_config_atomic` in `cli.py` to write `auth-config.json` atomically with `0o600` permissions for `cost-router issue-key`, `cost-router revoke-key`, and `cost-router rotate-key`.
   - Documented these decisions in `docs/adr/014-openai-sse-streaming-and-atomic-auth-writes.md` (`ADR-014`).
+- **WCAG 2.1 AA Accessibility, SQLite WAL Lifecycle, Enterprise Governance & Performance Regression Suite (`dashboard.py`, `report.py`, `store.py`):**
+  - Upgraded `render_live_finops_dashboard_html` (`dashboard.py`) and `render_pareto_explorer_html` (`report.py`) to WCAG 2.1 AA with semantic `<header>` / `<main id="main-content">` landmarks, `.skip-link` navigation, `:focus-visible` outlines, `@media (prefers-reduced-motion: reduce)`, `aria-live="polite"` status regions, `scope="col"` table headers, `aria-label` on `#quality-slider` / `#pareto-svg`, and synchronized `aria-pressed` filter tabs.
+  - Fixed the `. btn-active:hover` CSS selector typo to `.btn-active:hover` in `report.py`.
+  - Guarded `SQLiteEconomicsStore.__enter__` with `_ensure_open()` to reject re-entering a closed store, and executed `PRAGMA wal_checkpoint(TRUNCATE)` on `SQLiteEconomicsStore.close()`.
+  - Added enterprise repository governance (`SECURITY.md`, `CODEOWNERS`, `.env.example`, `.github/dependabot.yml`) and performance regression tests.
+  - Documented these decisions in `docs/adr/015-wcag-accessibility-and-wal-lifecycle.md` (`ADR-015`).
 
 ## [0.4.0] - 2026-11-26
 
