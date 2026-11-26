@@ -356,6 +356,41 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to a TenantAuthRegistry JSON file (from issue-key)",
     )
+    serve_p.add_argument(
+        "--live",
+        action="store_true",
+        help="Execute against live LLM HTTP endpoint instead of deterministic fixture adapter",
+    )
+    serve_p.add_argument(
+        "--provider",
+        choices=["openai", "anthropic"],
+        default="openai",
+        help="Live LLM provider adapter to use with --live (default: openai)",
+    )
+    serve_p.add_argument(
+        "--base-url",
+        type=str,
+        default="https://api.openai.com/v1",
+        help="Provider API base URL (default: https://api.openai.com/v1)",
+    )
+    serve_p.add_argument(
+        "--api-key-env",
+        type=str,
+        default="OPENAI_API_KEY",
+        help="Environment variable holding upstream provider API key (default: OPENAI_API_KEY)",
+    )
+    serve_p.add_argument(
+        "--max-cost-usd",
+        type=str,
+        default="5.00",
+        help="Live spend circuit breaker in USD (default: 5.00)",
+    )
+    serve_p.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="Max concurrent live upstream requests (default: 4)",
+    )
 
     issue_p = sub.add_parser(
         "issue-key",
@@ -610,6 +645,35 @@ def _print_bandit_summary(
     print(f"Artifacts written to: {out_dir}")
 
 
+def _build_live_adapter(
+    *,
+    provider: str,
+    base_url: str,
+    api_key_env: str,
+    concurrency: int,
+    max_cost_usd: Decimal,
+) -> ProviderAdapter:
+    if provider == "anthropic":
+        resolved_key_env = "ANTHROPIC_API_KEY" if api_key_env == "OPENAI_API_KEY" else api_key_env
+        resolved_base_url = (
+            "https://api.anthropic.com" if base_url == "https://api.openai.com/v1" else base_url
+        )
+        return AnthropicAdapter(
+            base_url=resolved_base_url,
+            api_key=os.environ.get(resolved_key_env),
+            max_concurrency=concurrency,
+            max_cost_usd=max_cost_usd,
+        )
+    if provider == "openai":
+        return OpenAICompatibleAdapter(
+            base_url=base_url,
+            api_key=os.environ.get(api_key_env),
+            max_concurrency=concurrency,
+            max_cost_usd=max_cost_usd,
+        )
+    raise ValueError(f"Unsupported provider {provider!r}")
+
+
 def _build_gateway_for_serve(
     *,
     policy_id: str,
@@ -620,6 +684,12 @@ def _build_gateway_for_serve(
     circuit_failure_threshold: int = 3,
     bandit_policy_file: Path | None = None,
     auth_registry: TenantAuthRegistry | None = None,
+    live: bool = False,
+    provider: str = "openai",
+    base_url: str = "https://api.openai.com/v1",
+    api_key_env: str = "OPENAI_API_KEY",
+    max_cost_usd: Decimal = Decimal("5.00"),
+    concurrency: int = 4,
 ) -> OpenAIRouterGateway:
     suite = default_policy_suite()
     policies_by_id = {p.policy_id: p for p in suite}
@@ -650,15 +720,26 @@ def _build_gateway_for_serve(
             ]
         )
 
+    base_adapter: ProviderAdapter = (
+        _build_live_adapter(
+            provider=provider,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            concurrency=concurrency,
+            max_cost_usd=max_cost_usd,
+        )
+        if live
+        else DeterministicFixtureAdapter()
+    )
     adapter: ProviderAdapter = (
         FallbackChainAdapter(
-            inner=DeterministicFixtureAdapter(),
+            inner=base_adapter,
             breaker=ProviderCircuitBreaker(
                 config=CircuitBreakerConfig(failure_threshold=circuit_failure_threshold)
             ),
         )
         if enable_fallback
-        else DeterministicFixtureAdapter()
+        else base_adapter
     )
 
     bandit_router = (
@@ -714,36 +795,17 @@ def main(argv: list[str] | None = None) -> int:
                 if args.catalog is not None
                 else load_bundled_catalog()
             )
-            replay_adapter: ProviderAdapter
-            if args.live:
-                if args.provider == "anthropic":
-                    api_key_env = (
-                        "ANTHROPIC_API_KEY"
-                        if args.api_key_env == "OPENAI_API_KEY"
-                        else args.api_key_env
-                    )
-                    base_url = (
-                        "https://api.anthropic.com"
-                        if args.base_url == "https://api.openai.com/v1"
-                        else args.base_url
-                    )
-                    api_key = os.environ.get(api_key_env)
-                    replay_adapter = AnthropicAdapter(
-                        base_url=base_url,
-                        api_key=api_key,
-                        max_concurrency=args.concurrency,
-                        max_cost_usd=Decimal(args.max_cost_usd),
-                    )
-                else:
-                    api_key = os.environ.get(args.api_key_env)
-                    replay_adapter = OpenAICompatibleAdapter(
-                        base_url=args.base_url,
-                        api_key=api_key,
-                        max_concurrency=args.concurrency,
-                        max_cost_usd=Decimal(args.max_cost_usd),
-                    )
-            else:
-                replay_adapter = DeterministicFixtureAdapter()
+            replay_adapter: ProviderAdapter = (
+                _build_live_adapter(
+                    provider=args.provider,
+                    base_url=args.base_url,
+                    api_key_env=args.api_key_env,
+                    concurrency=args.concurrency,
+                    max_cost_usd=Decimal(args.max_cost_usd),
+                )
+                if args.live
+                else DeterministicFixtureAdapter()
+            )
 
             receipt = asyncio.run(
                 run_pipeline(
@@ -869,6 +931,12 @@ def main(argv: list[str] | None = None) -> int:
                 circuit_failure_threshold=args.circuit_failure_threshold,
                 bandit_policy_file=args.bandit_policy_file,
                 auth_registry=auth_registry,
+                live=args.live,
+                provider=args.provider,
+                base_url=args.base_url,
+                api_key_env=args.api_key_env,
+                max_cost_usd=Decimal(args.max_cost_usd),
+                concurrency=args.concurrency,
             )
             server = create_router_http_server(gateway, host=args.host, port=args.port)
         except Exception as exc:
