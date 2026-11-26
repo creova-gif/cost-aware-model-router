@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-26
+
+### Added
+
+- **Heterogeneous Multi-Provider Routing (`registry.py`):**
+  - `MultiProviderAdapter` routing `compact`, `mid`, and `frontier` tiers across heterogeneous `ProviderAdapter` backends via explicit `tier_adapters` overrides, `TierModelSpec.provider` (`provider_adapters`), and `fallback_adapter`.
+  - Identity-based adapter grouping (`id(adapter)`) with concurrent `asyncio.gather` execution and typed `ProvenanceTag.UNKNOWN` (`error_code="missing_provider_adapter"`) fallback traces for unconfigured tiers.
+- **Live FinOps Control-Plane Dashboard (`dashboard.py`, `server.py`):**
+  - `render_live_finops_dashboard_html` generating a zero-CDN, XSS-hardened HTML control plane with thermostat unit-economics KPIs, spend breakdowns (by org, agent, category, and tier), shadow-mode counterfactual comparisons, recent OpenTelemetry `gen_ai.*` spans, and live client-side refresh.
+  - `GET /dashboard` route on `create_router_http_server` (`text/html; charset=utf-8`, `Cache-Control: no-store`).
+- **Top-Level Package Exports & Architecture Record:**
+  - Exported `MultiProviderAdapter` and `render_live_finops_dashboard_html` in `cost_aware_model_router.__init__`.
+  - Documented the design and failure modes in `docs/adr/005-multi-provider-registry-and-live-dashboard.md` (`ADR-005`).
+
 ## [0.1.0] - 2026-11-25
 
 ### Added
