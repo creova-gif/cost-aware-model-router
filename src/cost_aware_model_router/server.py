@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from cost_aware_model_router.dashboard import render_live_finops_dashboard_html
 from cost_aware_model_router.gateway import (
     ChatCompletionRequest,
     OpenAIRouterGateway,
@@ -89,6 +90,25 @@ def create_router_http_server(
                         "text/plain; version=0.0.4; charset=utf-8",
                         metrics_text,
                     )
+                    return
+
+                if path == "/dashboard":
+                    economics_snapshot: dict[str, Any] | None = (
+                        gateway.summarize_economics()
+                        if gateway._thermostat is not None
+                        else None
+                    )
+                    shadow_snapshot = gateway.build_shadow_summary()
+                    recent_spans = [
+                        span.model_dump(mode="json")
+                        for span in gateway.span_exporter.get_spans()[-50:]
+                    ]
+                    dashboard_html = render_live_finops_dashboard_html(
+                        economics=economics_snapshot,
+                        shadow_summary=shadow_snapshot,
+                        recent_spans=recent_spans,
+                    )
+                    self._send_text(200, "text/html; charset=utf-8", dashboard_html)
                     return
 
                 self._send_json(404, {"error": {"message": f"Unsupported route GET {path}"}})
