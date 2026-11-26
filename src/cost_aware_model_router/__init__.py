@@ -68,7 +68,7 @@ from cost_aware_model_router.thermostat import (
     ThermostatDecision,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 def healthcheck() -> str:

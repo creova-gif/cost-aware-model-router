@@ -3,7 +3,7 @@
 **Evidence-first 3-tier LLM routing, interactive 2D Pareto frontier optimization, autonomous Agent Budget Thermostat, shadow-mode gateway, and SHA-256 auditable FinOps savings receipts.**
 
 [![CI](https://github.com/creova-gif/cost-aware-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/creova-gif/cost-aware-model-router/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-v0.3.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.4.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![Pydantic v2](https://img.shields.io/badge/pydantic-v2-brightgreen.svg)](src/cost_aware_model_router/schemas.py)
