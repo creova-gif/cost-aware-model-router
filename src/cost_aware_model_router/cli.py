@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import math
 import os
 import signal
 import sys
+import tempfile
 import threading
 from decimal import Decimal
 from pathlib import Path
@@ -74,6 +76,33 @@ from cost_aware_model_router.thermostat import (
     BudgetPolicy,
     SpendSummary,
 )
+
+
+def _write_auth_config_atomic(path: Path, content: str) -> None:
+    """Write auth config atomically with restrictive 0o600 permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=".auth-config-",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(content)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        with contextlib.suppress(NotImplementedError):
+            os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if tmp_path is not None:
+            with contextlib.suppress(OSError):
+                tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def load_workload_jsonl(path: Path) -> list[WorkloadItem]:
@@ -977,8 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
                 rate_limit_rps=args.rate_limit_rps,
                 burst_capacity=args.burst_capacity,
             )
-            args.out.parent.mkdir(parents=True, exist_ok=True)
-            args.out.write_text(registry.to_json() + "\n", encoding="utf-8")
+            _write_auth_config_atomic(args.out, registry.to_json() + "\n")
         except Exception as exc:
             print(f"Key issuance failed: {exc}", file=sys.stderr)
             return 1
@@ -996,7 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise FileNotFoundError(f"Auth config file not found: {args.auth_config}")
             registry = TenantAuthRegistry.from_json(args.auth_config.read_text(encoding="utf-8"))
             record = registry.disable_key(args.key_id)
-            args.auth_config.write_text(registry.to_json() + "\n", encoding="utf-8")
+            _write_auth_config_atomic(args.auth_config, registry.to_json() + "\n")
         except Exception as exc:
             print(f"Key revocation failed: {exc}", file=sys.stderr)
             return 1
@@ -1012,7 +1040,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise FileNotFoundError(f"Auth config file not found: {args.auth_config}")
             registry = TenantAuthRegistry.from_json(args.auth_config.read_text(encoding="utf-8"))
             raw_token, record = registry.rotate_key(args.key_id)
-            args.auth_config.write_text(registry.to_json() + "\n", encoding="utf-8")
+            _write_auth_config_atomic(args.auth_config, registry.to_json() + "\n")
         except Exception as exc:
             print(f"Key rotation failed: {exc}", file=sys.stderr)
             return 1
