@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import signal
 import sys
@@ -442,6 +443,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Path to hashed TenantAuthRegistry JSON",
+    )
+
+    prune_p = sub.add_parser(
+        "prune-db",
+        help="Prune old shadow_comparisons and otel_spans from a SQLiteEconomicsStore database",
+    )
+    prune_p.add_argument(
+        "--db-path",
+        type=Path,
+        required=True,
+        help="Path to SQLiteEconomicsStore database",
+    )
+    prune_p.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=168.0,
+        help="Delete shadow_comparisons and otel_spans older than this many hours (default: 168.0)",
     )
 
     return parser
@@ -911,6 +929,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"org_id={record.org_id}")
         print("enabled=false")
         print(f"auth_config={args.auth_config}")
+        return 0
+
+    if args.command == "prune-db":
+        prune_store: SQLiteEconomicsStore | None = None
+        try:
+            if not math.isfinite(args.max_age_hours) or args.max_age_hours <= 0:
+                raise ValueError("--max-age-hours must be a positive finite number")
+            prune_store = SQLiteEconomicsStore(args.db_path)
+            deleted = prune_store.prune_older_than(args.max_age_hours * 3600.0)
+        except (OSError, ValueError) as exc:
+            print(f"Database prune failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            if prune_store is not None:
+                prune_store.close()
+        print(f"db_path={args.db_path}")
+        print(f"max_age_hours={args.max_age_hours}")
+        print(f"shadow_comparisons_deleted={deleted['shadow_comparisons']}")
+        print(f"otel_spans_deleted={deleted['otel_spans']}")
         return 0
 
     if args.command == "serve":
