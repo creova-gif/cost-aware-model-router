@@ -7,7 +7,7 @@ import threading
 import time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -45,9 +45,13 @@ from cost_aware_model_router.telemetry import (
 )
 from cost_aware_model_router.thermostat import (
     AgentBudgetThermostat,
+    SpendLedgerEntry,
     ThermostatAction,
     ThermostatDecision,
 )
+
+if TYPE_CHECKING:
+    from cost_aware_model_router.store import SQLiteEconomicsStore
 
 
 class ThermostatBlockedError(Exception):
@@ -314,6 +318,7 @@ class OpenAIRouterGateway:
         policies: list[PolicySpec] | None = None,
         span_exporter: InMemorySpanExporter | None = None,
         thermostat: AgentBudgetThermostat | None = None,
+        store: SQLiteEconomicsStore | None = None,
         shadow_log_path: Path | None = None,
         default_org_id: str = "org_demo",
         default_agent_id: str = "agent_gateway",
@@ -335,6 +340,7 @@ class OpenAIRouterGateway:
 
         self._span_exporter = span_exporter or InMemorySpanExporter()
         self._thermostat = thermostat
+        self._store = store
         self._shadow_log_path = shadow_log_path
         self._default_org_id = default_org_id
         self._default_agent_id = default_agent_id
@@ -432,7 +438,7 @@ class OpenAIRouterGateway:
                     extra_attributes={"cost_router.thermostat_action": thermostat_action_val},
                 )
                 self._span_exporter.record(span)
-                self._thermostat.record_outcome(
+                cached_ledger_entry = self._thermostat.record_outcome(
                     request_id=workload_item.request_id,
                     org_id=workload_item.org_id,
                     agent_id=workload_item.agent_id,
@@ -445,6 +451,9 @@ class OpenAIRouterGateway:
                     output_tokens=0,
                     cached=True,
                 )
+                if self._store is not None:
+                    self._store.record_span(span)
+                    self._store.record_ledger_entry(cached_ledger_entry)
                 return ChatCompletionResponse(
                     id=completion_id,
                     created=created_ts,
@@ -489,8 +498,9 @@ class OpenAIRouterGateway:
         primary_trace = traces[(workload_item.request_id, effective_tier)]
         end_ns = max(start_ns + int(primary_trace.latency_ms * 1_000_000), time.time_ns())
 
+        ledger_entry: SpendLedgerEntry | None = None
         if self._thermostat is not None:
-            self._thermostat.record_outcome(
+            ledger_entry = self._thermostat.record_outcome(
                 request_id=workload_item.request_id,
                 org_id=workload_item.org_id,
                 agent_id=workload_item.agent_id,
@@ -503,6 +513,20 @@ class OpenAIRouterGateway:
                 output_tokens=primary_trace.output_tokens,
                 prompt=workload_item.prompt,
                 response_text=primary_trace.response_text,
+                cached=False,
+            )
+        elif self._store is not None:
+            ledger_entry = SpendLedgerEntry(
+                request_id=workload_item.request_id,
+                org_id=workload_item.org_id,
+                agent_id=workload_item.agent_id,
+                category=workload_item.category,
+                tier=effective_tier,
+                provenance=primary_trace.cost_provenance,
+                passed=True,
+                cost_usd=primary_trace.cost_usd,
+                input_tokens=primary_trace.input_tokens,
+                output_tokens=primary_trace.output_tokens,
                 cached=False,
             )
 
@@ -545,6 +569,8 @@ class OpenAIRouterGateway:
                     )
                     with self._shadow_log_path.open("a", encoding="utf-8") as fh:
                         fh.write(line + "\n")
+            if self._store is not None:
+                self._store.record_shadow_comparison(shadow_rec)
 
         model_spec = self._catalog.models[effective_tier]
         extra_attrs: dict[str, OTelAttributeValue] | None = (
@@ -572,6 +598,10 @@ class OpenAIRouterGateway:
             extra_attributes=extra_attrs,
         )
         self._span_exporter.record(span)
+        if self._store is not None:
+            self._store.record_span(span)
+            if ledger_entry is not None:
+                self._store.record_ledger_entry(ledger_entry)
 
         return ChatCompletionResponse(
             id=completion_id,
@@ -608,9 +638,11 @@ class OpenAIRouterGateway:
         )
 
     def summarize_economics(self, org_id: str | None = None) -> dict[str, Any]:
-        if self._thermostat is None:
-            raise ValueError("Thermostat is not configured on this gateway")
-        return self._thermostat.summarize_economics(org_id=org_id).model_dump(mode="json")
+        if self._thermostat is not None:
+            return self._thermostat.summarize_economics(org_id=org_id).model_dump(mode="json")
+        if self._store is not None:
+            return self._store.summarize_economics(org_id=org_id).model_dump(mode="json")
+        raise ValueError("Thermostat or SQLiteEconomicsStore is not configured on this gateway")
 
     def build_shadow_summary(self) -> dict[str, Any]:
         records = self.get_shadow_records()

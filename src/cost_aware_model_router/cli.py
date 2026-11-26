@@ -47,6 +47,7 @@ from cost_aware_model_router.schemas import (
     format_usd_str,
 )
 from cost_aware_model_router.server import create_router_http_server
+from cost_aware_model_router.store import SQLiteEconomicsStore
 from cost_aware_model_router.telemetry import (
     InMemorySpanExporter,
     load_policies_from_json,
@@ -289,6 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional hourly USD budget to enable AgentBudgetThermostat",
     )
+    serve_p.add_argument(
+        "--db-path",
+        type=Path,
+        default=None,
+        help="Optional SQLite database path for durable ledger, shadow, and span persistence",
+    )
 
     return parser
 
@@ -447,6 +454,7 @@ def _build_gateway_for_serve(
     policy_id: str,
     shadow_policy_id: str | None = None,
     hourly_budget_usd: Decimal | None = None,
+    store: SQLiteEconomicsStore | None = None,
 ) -> OpenAIRouterGateway:
     suite = default_policy_suite()
     policies_by_id = {p.policy_id: p for p in suite}
@@ -484,6 +492,7 @@ def _build_gateway_for_serve(
         shadow_policy=shadow_policy,
         policies=suite,
         thermostat=thermostat,
+        store=store,
     )
 
 
@@ -602,14 +611,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "serve":
+        store: SQLiteEconomicsStore | None = None
         try:
+            store = SQLiteEconomicsStore(args.db_path) if args.db_path is not None else None
             gateway = _build_gateway_for_serve(
                 policy_id=args.policy,
                 shadow_policy_id=args.shadow_policy,
                 hourly_budget_usd=args.hourly_budget_usd,
+                store=store,
             )
             server = create_router_http_server(gateway, host=args.host, port=args.port)
         except Exception as exc:
+            if store is not None:
+                store.close()
             print(f"Failed to start server: {exc}", file=sys.stderr)
             return 1
         raw_host, bound_port = server.server_address[:2]
@@ -621,6 +635,8 @@ def main(argv: list[str] | None = None) -> int:
             pass
         finally:
             server.server_close()
+            if store is not None:
+                store.close()
         return 0
 
     return 2
