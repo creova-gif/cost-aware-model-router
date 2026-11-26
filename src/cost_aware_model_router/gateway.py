@@ -370,6 +370,10 @@ class OpenAIRouterGateway:
     def auth_registry(self) -> TenantAuthRegistry | None:
         return self._auth_registry
 
+    @property
+    def store(self) -> SQLiteEconomicsStore | None:
+        return self._store
+
     def get_shadow_records(self) -> list[ShadowComparisonRecord]:
         with self._lock:
             return list(self._shadow_records)

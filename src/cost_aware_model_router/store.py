@@ -470,6 +470,17 @@ class SQLiteEconomicsStore:
             spend_by_tier=spend_by_tier,
         )
 
+    def is_healthy(self) -> bool:
+        """Return True if the store is open and responds to a lightweight SQLite query."""
+        with self._lock:
+            if self._closed:
+                return False
+            try:
+                self._conn.execute("SELECT 1").fetchone()
+                return True
+            except sqlite3.Error:
+                return False
+
     def close(self) -> None:
         """Close the underlying SQLite connection idempotently."""
         with self._lock:

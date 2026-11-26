@@ -125,6 +125,15 @@ def create_router_http_server(
                     return
 
                 if path == "/readyz":
+                    if gateway.store is not None and not gateway.store.is_healthy():
+                        self._send_json(
+                            503,
+                            {
+                                "status": "not_ready",
+                                "reason": "economics_store_unhealthy",
+                            },
+                        )
+                        return
                     cb = getattr(gateway.adapter, "circuit_breaker", None)
                     if isinstance(cb, ProviderCircuitBreaker):
                         snapshot = cb.snapshot()
