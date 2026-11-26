@@ -283,7 +283,7 @@ The gateway ASGI transport (`create_gateway_asgi_transport` in [gateway.py](file
 
 ### 8. Serve the Local OpenAI-Compatible HTTP Gateway (`cost-router serve`)
 
-Start the zero-dependency `ThreadingHTTPServer` locally or in a non-root container (`Dockerfile`). Optionally provision a hashed `TenantAuthRegistry` JSON config via `cost-router issue-key` and load it with `--auth-config`:
+Start the zero-dependency `ThreadingHTTPServer` locally or in a non-root container (`Dockerfile`). Optionally provision a hashed `TenantAuthRegistry` JSON config via `cost-router issue-key` and load it with `--auth-config`, pass multi-tenant thermostat envelopes with `--budget-config`, and enable privacy-safe structured JSON access logs (`request_id`, `method`, `path`, `status_code`, `duration_ms`) with `--access-log`:
 
 ```bash
 # Issue a virtual API key (prints raw token once; stores only SHA-256 digest in auth-config.json)
@@ -299,17 +299,19 @@ cost-router revoke-key \
   --key-id <key_id> \
   --auth-config ./artifacts/auth-config.json
 
-# Start local HTTP router with shadow policy, fallback circuit breaker, bandit policy, auth config, and $1.00/hr thermostat budget
+# Start local HTTP router with shadow policy, fallback circuit breaker, bandit policy, auth config, multi-tenant budget config, structured access log, and $1.00/hr thermostat fallback budget
 cost-router serve \
   --host 127.0.0.1 \
   --port 8080 \
   --policy threshold-balanced \
   --shadow-policy threshold-aggressive \
   --hourly-budget-usd 1.00000000 \
+  --budget-config ./artifacts/budget-config.json \
   --enable-fallback \
   --circuit-failure-threshold 3 \
   --bandit-policy-file ./artifacts/bandit/bandit-policy.json \
-  --auth-config ./artifacts/auth-config.json
+  --auth-config ./artifacts/auth-config.json \
+  --access-log
 
 # Or serve against live OpenAI / Anthropic providers (shares _build_live_adapter() with replay; handles SIGTERM gracefully)
 cost-router serve \
@@ -319,7 +321,7 @@ cost-router serve \
   --max-cost-usd 5.00000000
 ```
 
-All HTTP responses include `X-Request-Id` correlation (propagating a valid incoming `X-Request-Id` or generating a UUID4 hex ID) and baseline security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`).
+All HTTP responses include `X-Request-Id` correlation (propagating a valid incoming `X-Request-Id` or generating a UUID4 hex ID) and baseline security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`). Rate-limited `429` responses include the standard `Retry-After: 1` header.
 
 Query the running server with `curl`:
 
@@ -396,12 +398,14 @@ cost-router train-bandit --out ./artifacts/bandit --epochs 4 --quality-floor 0.8
 cost-router issue-key --org-id org_demo --role router_client --out ./artifacts/auth-config.json
 cost-router revoke-key --key-id <key_id> --auth-config ./artifacts/auth-config.json
 
-# 4. Serve OpenAI-compatible gateway (offline fixture or --live --provider openai|anthropic) with fallback circuit breakers, bandit policy, and tenant auth config
+# 4. Serve OpenAI-compatible gateway (offline fixture or --live --provider openai|anthropic) with fallback circuit breakers, bandit policy, tenant auth/budget configs, and structured access logging
 cost-router serve \
   --enable-fallback \
   --circuit-failure-threshold 3 \
   --bandit-policy-file ./artifacts/bandit/bandit-policy.json \
-  --auth-config ./artifacts/auth-config.json
+  --auth-config ./artifacts/auth-config.json \
+  --budget-config ./artifacts/budget-config.json \
+  --access-log
 cost-router serve --live --provider anthropic --api-key-env ANTHROPIC_API_KEY --max-cost-usd 5.00000000
 
 # 5. Prune expired shadow_comparisons and otel_spans from SQLite while preserving spend_ledger totals
@@ -459,6 +463,7 @@ pytest -q
 - **ADR-009 (Enterprise Auth Config, Readiness Probes, Correlation Headers & Dashboard Circuit Health):** [docs/adr/009-enterprise-auth-config-readiness-and-correlation.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/009-enterprise-auth-config-readiness-and-correlation.md)
 - **ADR-010 (Live Serve Provider Wiring, Key Revocation, Graceful Shutdown & Store Readiness):** [docs/adr/010-live-serve-provider-and-store-readiness.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/010-live-serve-provider-and-store-readiness.md)
 - **ADR-011 (Shared Event Loop, Bounded Store Retention Pruning & Circuit Breaker Reset):** [docs/adr/011-shared-event-loop-retention-and-circuit-reset.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/011-shared-event-loop-retention-and-circuit-reset.md)
+- **ADR-012 (Structured Access Log, Burst Socket Hardening, Multi-Tenant Budget Config & `429 Retry-After`):** [docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md)
 - **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **Changelog (Release History):** [CHANGELOG.md](CHANGELOG.md)
 - **STRIDE Threat Model & AI-Router Security Mitigations:** [docs/THREAT_MODEL.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/THREAT_MODEL.md)

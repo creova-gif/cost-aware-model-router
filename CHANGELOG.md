@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structured Access Log, Burst Socket Hardening, Multi-Tenant Budget Config & `429 Retry-After` (`server.py`, `cli.py`):**
+  - Hardened `_RouterHTTPServer` for burst traffic (`allow_reuse_address = True`, `daemon_threads = True`, `request_queue_size = 128`) and added a privacy-safe `access_log` callback (`--access-log` on `cost-router serve`) emitting `request_id`, `method`, `path`, `status_code`, and `duration_ms` without logging credentials or request bodies.
+  - Added `--budget-config` JSON loading on `cost-router serve` for multi-tenant `AgentBudgetThermostat` budget envelopes.
+  - Added the standard `Retry-After: 1` header on `429` rate-limit responses.
+  - Documented these decisions in `docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md` (`ADR-012`).
+
 ## [0.4.0] - 2026-11-26
 
 ### Added
