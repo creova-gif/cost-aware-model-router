@@ -92,6 +92,11 @@ def render_live_finops_dashboard_html(
   th {{ background: #f4f4f5; font-weight: 600; }}
   .empty-state {{ display: none; padding: 14px; text-align: center; font-size: 12px; color: var(--muted); border: 1px dashed var(--border); margin-top: 8px; }}
   .status-banner {{ display: none; padding: 8px 12px; font-size: 12px; border-radius: 3px; border: 1px solid #fbbf24; background: var(--warn-bg); color: var(--warn-fg); }}
+  .skip-link {{ position: absolute; left: -9999px; top: 0; background: #18181b; color: #ffffff; padding: 8px 12px; font-size: 12px; font-weight: 600; text-decoration: none; border-radius: 3px; z-index: 1000; }}
+  .skip-link:focus {{ left: 12px; top: 12px; }}
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {{ outline: 2px solid #2563eb; outline-offset: 2px; }}
+  main {{ display: flex; flex-direction: column; gap: 16px; }}
+  @media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; animation: none !important; }} }}
   @media (max-width: 960px) {{
     .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     .breakdown-grid {{ grid-template-columns: 1fr; }}
@@ -99,19 +104,21 @@ def render_live_finops_dashboard_html(
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <div class="container">
-  <div class="panel header-bar">
+  <header class="panel header-bar">
     <div>
       <h1>{safe_title}</h1>
-      <div class="sub mono" id="refresh-status">Initial server snapshot loaded</div>
+      <div class="sub mono" id="refresh-status" aria-live="polite">Initial server snapshot loaded</div>
     </div>
     <div class="controls">
       <span class="badge" id="thermostat-badge">Thermostat: Unknown</span>
       <button class="btn" id="btn-refresh" type="button">Refresh Live Metrics</button>
     </div>
-  </div>
+  </header>
 
-  <div class="status-banner" id="status-banner"></div>
+  <main id="main-content">
+  <div class="status-banner" id="status-banner" role="status" aria-live="polite"></div>
 
   <div class="kpi-grid">
     <div class="kpi-card">
@@ -147,7 +154,7 @@ def render_live_finops_dashboard_html(
       <div class="breakdown-box">
         <h3>By Org (org_id)</h3>
         <table>
-          <thead><tr><th>org_id</th><th>Spend (USD)</th></tr></thead>
+          <thead><tr><th scope="col">org_id</th><th scope="col">Spend (USD)</th></tr></thead>
           <tbody id="tbody-org"></tbody>
         </table>
         <div class="empty-state" id="empty-org">No org spend recorded.</div>
@@ -155,7 +162,7 @@ def render_live_finops_dashboard_html(
       <div class="breakdown-box">
         <h3>By Agent (agent_id)</h3>
         <table>
-          <thead><tr><th>agent_id</th><th>Spend (USD)</th></tr></thead>
+          <thead><tr><th scope="col">agent_id</th><th scope="col">Spend (USD)</th></tr></thead>
           <tbody id="tbody-agent"></tbody>
         </table>
         <div class="empty-state" id="empty-agent">No agent spend recorded.</div>
@@ -163,7 +170,7 @@ def render_live_finops_dashboard_html(
       <div class="breakdown-box">
         <h3>By Category</h3>
         <table>
-          <thead><tr><th>category</th><th>Spend (USD)</th></tr></thead>
+          <thead><tr><th scope="col">category</th><th scope="col">Spend (USD)</th></tr></thead>
           <tbody id="tbody-category"></tbody>
         </table>
         <div class="empty-state" id="empty-category">No category spend recorded.</div>
@@ -171,7 +178,7 @@ def render_live_finops_dashboard_html(
       <div class="breakdown-box">
         <h3>By Tier</h3>
         <table>
-          <thead><tr><th>tier</th><th>Spend (USD)</th></tr></thead>
+          <thead><tr><th scope="col">tier</th><th scope="col">Spend (USD)</th></tr></thead>
           <tbody id="tbody-tier"></tbody>
         </table>
         <div class="empty-state" id="empty-tier">No tier spend recorded.</div>
@@ -184,13 +191,13 @@ def render_live_finops_dashboard_html(
     <table>
       <thead>
         <tr>
-          <th>Request ID</th>
-          <th>Org / Agent</th>
-          <th>Primary Policy</th>
-          <th>Shadow Policy</th>
-          <th>Delta (USD)</th>
-          <th>Would Downgrade</th>
-          <th>Explanation</th>
+          <th scope="col">Request ID</th>
+          <th scope="col">Org / Agent</th>
+          <th scope="col">Primary Policy</th>
+          <th scope="col">Shadow Policy</th>
+          <th scope="col">Delta (USD)</th>
+          <th scope="col">Would Downgrade</th>
+          <th scope="col">Explanation</th>
         </tr>
       </thead>
       <tbody id="tbody-shadow"></tbody>
@@ -203,13 +210,13 @@ def render_live_finops_dashboard_html(
     <table>
       <thead>
         <tr>
-          <th>Trace / Span ID</th>
-          <th>gen_ai.system / model</th>
-          <th>Tokens (In / Out)</th>
-          <th>Org / Agent</th>
-          <th>Policy / Tier</th>
-          <th>Cost (USD)</th>
-          <th>Provenance / Shadow</th>
+          <th scope="col">Trace / Span ID</th>
+          <th scope="col">gen_ai.system / model</th>
+          <th scope="col">Tokens (In / Out)</th>
+          <th scope="col">Org / Agent</th>
+          <th scope="col">Policy / Tier</th>
+          <th scope="col">Cost (USD)</th>
+          <th scope="col">Provenance / Shadow</th>
         </tr>
       </thead>
       <tbody id="tbody-spans"></tbody>
@@ -222,14 +229,15 @@ def render_live_finops_dashboard_html(
     <table>
       <thead>
         <tr>
-          <th>Model Tier</th>
-          <th>Circuit State</th>
+          <th scope="col">Model Tier</th>
+          <th scope="col">Circuit State</th>
         </tr>
       </thead>
       <tbody id="tbody-circuits"></tbody>
     </table>
     <div class="empty-state" id="empty-circuits">Circuit breaker disabled</div>
   </div>
+  </main>
 </div>
 
 <script id="finops-snapshot" type="application/json">{safe_snapshot}</script>
