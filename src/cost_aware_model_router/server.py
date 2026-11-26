@@ -207,6 +207,7 @@ def create_router_http_server(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
             if extra_headers is not None:
                 for header_name, header_value in extra_headers.items():
                     self.send_header(header_name, header_value)
@@ -240,8 +241,20 @@ def create_router_http_server(
                 extra_headers=extra_headers,
             )
 
-        def _send_text(self, status_code: int, content_type: str, text: str) -> None:
-            self._send_bytes(status_code, content_type, text.encode("utf-8"))
+        def _send_text(
+            self,
+            status_code: int,
+            content_type: str,
+            text: str,
+            *,
+            extra_headers: dict[str, str] | None = None,
+        ) -> None:
+            self._send_bytes(
+                status_code,
+                content_type,
+                text.encode("utf-8"),
+                extra_headers=extra_headers,
+            )
 
         def _authorize(
             self,
@@ -404,7 +417,23 @@ def create_router_http_server(
                         recent_spans=recent_spans,
                         circuits=_build_circuits_snapshot(gateway),
                     )
-                    self._send_text(200, "text/html; charset=utf-8", dashboard_html)
+                    self._send_text(
+                        200,
+                        "text/html; charset=utf-8",
+                        dashboard_html,
+                        extra_headers={
+                            "Content-Security-Policy": (
+                                "default-src 'none'; "
+                                "script-src 'unsafe-inline'; "
+                                "style-src 'unsafe-inline'; "
+                                "img-src 'self' data:; "
+                                "connect-src 'self'; "
+                                "base-uri 'none'; "
+                                "form-action 'none'; "
+                                "frame-ancestors 'none'"
+                            )
+                        },
+                    )
                     return
 
                 self._send_json(404, {"error": {"message": f"Unsupported route GET {path}"}})
