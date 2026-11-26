@@ -171,7 +171,8 @@ def create_router_http_server(
                 for header_name, header_value in extra_headers.items():
                     self.send_header(header_name, header_value)
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
             if access_log is not None:
                 request_start: float = getattr(self, "_request_start", time.monotonic())
                 access_log(
@@ -225,6 +226,9 @@ def create_router_http_server(
                 )
                 return False, None
             return True, decision.org_id
+
+        def do_HEAD(self) -> None:
+            self.do_GET()
 
         def do_GET(self) -> None:
             self._request_start = time.monotonic()
