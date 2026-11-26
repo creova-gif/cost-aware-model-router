@@ -7,6 +7,7 @@ name = "cost-aware-model-router"
 version = "0.3.0"
 description = "Evidence-first LLM routing, 3-tier Pareto optimization, and auditable FinOps savings receipts."
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.9",
