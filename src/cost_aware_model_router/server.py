@@ -44,6 +44,17 @@ def _resolve_request_id(headers: Message[str, str] | Mapping[str, str]) -> str:
     return uuid.uuid4().hex
 
 
+def _build_circuits_snapshot(gateway: OpenAIRouterGateway) -> dict[str, Any]:
+    """Return a JSON-serializable circuit-breaker snapshot for FinOps endpoints and SSR."""
+    cb = getattr(gateway.adapter, "circuit_breaker", None)
+    if isinstance(cb, ProviderCircuitBreaker):
+        return {
+            "enabled": True,
+            "circuits": {tier.value: state.value for tier, state in cb.snapshot().items()},
+        }
+    return {"enabled": False, "circuits": {}}
+
+
 def create_router_http_server(
     gateway: OpenAIRouterGateway,
     *,
@@ -156,19 +167,7 @@ def create_router_http_server(
                     ok, _ = self._authorize(required_role=TenantRole.AUDITOR)
                     if not ok:
                         return
-                    cb = getattr(gateway.adapter, "circuit_breaker", None)
-                    if isinstance(cb, ProviderCircuitBreaker):
-                        self._send_json(
-                            200,
-                            {
-                                "enabled": True,
-                                "circuits": {
-                                    tier.value: state.value for tier, state in cb.snapshot().items()
-                                },
-                            },
-                        )
-                        return
-                    self._send_json(200, {"enabled": False, "circuits": {}})
+                    self._send_json(200, _build_circuits_snapshot(gateway))
                     return
 
                 if path == "/v1/finops/shadow-summary":
@@ -232,6 +231,7 @@ def create_router_http_server(
                         economics=economics_snapshot,
                         shadow_summary=shadow_snapshot,
                         recent_spans=recent_spans,
+                        circuits=_build_circuits_snapshot(gateway),
                     )
                     self._send_text(200, "text/html; charset=utf-8", dashboard_html)
                     return
