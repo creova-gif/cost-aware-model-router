@@ -1,0 +1,29 @@
+services:
+  cost-router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - cost_router_data:/data
+    command:
+      - "cost-router"
+      - "serve"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--db-path"
+      - "/data/economics.db"
+      - "--enable-fallback"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  cost_router_data:
