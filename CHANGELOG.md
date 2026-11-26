@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `--budget-config` JSON loading on `cost-router serve` for multi-tenant `AgentBudgetThermostat` budget envelopes.
   - Added the standard `Retry-After: 1` header on `429` rate-limit responses.
   - Documented these decisions in `docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md` (`ADR-012`).
+- **HTTP `HEAD` Probes & Atomic Tenant Key Rotation (`server.py`, `governance.py`, `cli.py`):**
+  - Added `HEAD` probe support on `/healthz`, `/readyz`, and `GET` routes in `_RouterRequestHandler` (`HEAD /healthz` and `HEAD /readyz` return status codes and headers without a response body for load balancers).
+  - Added atomic `TenantAuthRegistry.rotate_key()` and `cost-router rotate-key` / `cost-router list-keys` CLI subcommands for key rotation and non-secret key inventory inspection.
+  - Documented these decisions in `docs/adr/013-head-probes-and-key-rotation.md` (`ADR-013`).
 
 ## [0.4.0] - 2026-11-26
 
