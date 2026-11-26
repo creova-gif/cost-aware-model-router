@@ -25,7 +25,7 @@ jobs:
           cost-router simulate-thermostat --out ./artifacts/ci-demo/thermostat
           cost-router audit-holdout --out ./artifacts/ci-demo/holdout
           cost-router train-bandit --epochs 2 --out ./artifacts/ci-demo/bandit
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: milestone-1-pareto-demo
           path: ./artifacts/ci-demo/
