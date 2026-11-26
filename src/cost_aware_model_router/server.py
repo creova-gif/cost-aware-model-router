@@ -4,8 +4,9 @@ import asyncio
 import json
 import re
 import threading
+import time
 import uuid
-from collections.abc import Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -108,6 +109,10 @@ class _AsyncLoopRunner:
 class _RouterHTTPServer(ThreadingHTTPServer):
     """ThreadingHTTPServer with a shared background asyncio event loop."""
 
+    allow_reuse_address = True
+    daemon_threads = True
+    request_queue_size = 128
+
     def __init__(
         self,
         server_address: tuple[str, int],
@@ -129,6 +134,7 @@ def create_router_http_server(
     *,
     host: str = "127.0.0.1",
     port: int = 0,
+    access_log: Callable[[dict[str, Any]], None] | None = None,
 ) -> ThreadingHTTPServer:
     """Create a zero-dependency local ThreadingHTTPServer backed by OpenAIRouterGateway."""
 
@@ -156,6 +162,17 @@ def create_router_http_server(
             self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
+            if access_log is not None:
+                request_start: float = getattr(self, "_request_start", time.monotonic())
+                access_log(
+                    {
+                        "request_id": request_id,
+                        "method": self.command,
+                        "path": urlsplit(self.path).path,
+                        "status_code": status_code,
+                        "duration_ms": round((time.monotonic() - request_start) * 1000.0, 3),
+                    }
+                )
 
         def _send_json(self, status_code: int, payload: dict[str, Any]) -> None:
             encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -184,6 +201,7 @@ def create_router_http_server(
             return True, decision.org_id
 
         def do_GET(self) -> None:
+            self._request_start = time.monotonic()
             self._request_id = _resolve_request_id(self.headers)
             try:
                 parsed = urlsplit(self.path)
@@ -370,6 +388,7 @@ def create_router_http_server(
             return raw_body
 
         def do_POST(self) -> None:
+            self._request_start = time.monotonic()
             self._request_id = _resolve_request_id(self.headers)
             try:
                 parsed = urlsplit(self.path)
