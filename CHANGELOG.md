@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shared `_build_live_adapter()` across `cost-router replay --live` and `cost-router serve --live --provider openai|anthropic`.
   - Added `SQLiteEconomicsStore.is_healthy()` and wired it into `GET /readyz` (returning `503` when the SQLite store is unhealthy or all tier circuits are open).
   - Documented these decisions in `docs/adr/010-live-serve-provider-and-store-readiness.md` (`ADR-010`).
+- **Shared Event Loop, Store Retention Pruning & Circuit Breaker Reset (`server.py`, `store.py`, `resilience.py`, `cli.py`):**
+  - Added `_AsyncLoopRunner` and `_RouterHTTPServer` in `server.py` to run `POST /v1/chat/completions` coroutines on a single shared background `asyncio` event loop instead of per-request `asyncio.run(...)`.
+  - Added `SQLiteEconomicsStore.prune_older_than()` and `cost-router prune-db` to prune old `shadow_comparisons` and `otel_spans` rows while preserving `spend_ledger` totals.
+  - Added `ProviderCircuitBreaker.reset()` and `POST /v1/finops/circuits/reset` (`TenantRole.ADMIN` RBAC) to reset one or all tier circuits to `CLOSED`.
+  - Documented these decisions in `docs/adr/011-shared-event-loop-retention-and-circuit-reset.md` (`ADR-011`).
 
 ## [0.3.0] - 2026-11-26
 
