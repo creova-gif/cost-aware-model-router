@@ -123,6 +123,17 @@ class ProviderCircuitBreaker:
                 self._refresh_entry_locked(entry)
             return {tier: entry.state for tier, entry in self._entries.items()}
 
+    def reset(self, tier: ModelTier | None = None) -> None:
+        """Reset one tier or all tiers to CLOSED state with zeroed counters."""
+        targets = [tier] if tier is not None else list(ModelTier)
+        with self._lock:
+            for target_tier in targets:
+                entry = self._entries[target_tier]
+                entry.state = CircuitState.CLOSED
+                entry.consecutive_failures = 0
+                entry.consecutive_successes = 0
+                entry.opened_at = None
+
 
 def _is_trace_healthy(trace: ExecutionTrace | None) -> bool:
     if trace is None:
