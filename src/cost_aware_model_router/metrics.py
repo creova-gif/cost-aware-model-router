@@ -35,11 +35,19 @@ def _attr_decimal(val: OTelAttributeValue | None) -> Decimal:
         return Decimal("0")
 
 
+_CIRCUIT_STATE_VALUES: dict[str, int] = {
+    "closed": 0,
+    "half_open": 1,
+    "open": 2,
+}
+
+
 def render_prometheus_metrics(
     spans: list[OTelSpanRecord],
     summary: SpendSummary | None = None,
+    circuits: dict[str, str] | None = None,
 ) -> str:
-    """Render router OTel spans and optional thermostat summary in Prometheus 0.0.4 text format."""
+    """Render router OTel spans, optional thermostat summary, and circuit states in Prometheus 0.0.4 text format."""
     req_counts: dict[tuple[str, str, str, str], int] = defaultdict(int)
     spend_totals: dict[tuple[str, str, str], Decimal] = defaultdict(lambda: Decimal("0"))
     latency_sums: dict[tuple[str, str], float] = defaultdict(float)
@@ -106,5 +114,16 @@ def render_prometheus_metrics(
             lines.append(
                 f"cost_router_goodput_usd {format_usd_str(summary.cost_per_successful_outcome_usd)}"
             )
+
+    if circuits:
+        lines.append(
+            "# HELP cost_router_circuit_state "
+            "Provider circuit breaker state (0=closed, 1=half_open, 2=open)."
+        )
+        lines.append("# TYPE cost_router_circuit_state gauge")
+        for tier, state in sorted(circuits.items()):
+            lbl = _format_labels({"tier": tier})
+            val = _CIRCUIT_STATE_VALUES.get(state, -1)
+            lines.append(f"cost_router_circuit_state{lbl} {val}")
 
     return "\n".join(lines) + "\n"
