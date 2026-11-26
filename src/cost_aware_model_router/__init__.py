@@ -15,6 +15,13 @@ from cost_aware_model_router.gateway import (
     ShadowComparisonRecord,
     ThermostatBlockedError,
 )
+from cost_aware_model_router.governance import (
+    AuthDecision,
+    TenantAuthRegistry,
+    TenantKeyRecord,
+    TenantRole,
+    TokenBucketRateLimiter,
+)
 from cost_aware_model_router.judge import (
     DeterministicRubricJudge,
     HoldoutGeneralizationReport,
@@ -22,6 +29,12 @@ from cost_aware_model_router.judge import (
     LLMJudge,
     OutOfSamplePolicyAuditor,
     RubricCriterion,
+)
+from cost_aware_model_router.learner import (
+    ArmStats,
+    ComplexityBucket,
+    ContextualBanditConfig,
+    ContextualBanditRouter,
 )
 from cost_aware_model_router.metrics import render_prometheus_metrics
 from cost_aware_model_router.registry import MultiProviderAdapter
@@ -56,10 +69,15 @@ def healthcheck() -> str:
 __all__ = [
     "AgentBudgetThermostat",
     "AnthropicAdapter",
+    "ArmStats",
+    "AuthDecision",
     "BudgetPolicy",
     "ChatCompletionRequest",
     "ChatCompletionResponse",
     "ChatMessage",
+    "ComplexityBucket",
+    "ContextualBanditConfig",
+    "ContextualBanditRouter",
     "DeterministicFixtureAdapter",
     "DeterministicRubricJudge",
     "HoldoutGeneralizationReport",
@@ -85,9 +103,13 @@ __all__ = [
     "SpendLedgerEntry",
     "SpendSummary",
     "TaskCategory",
+    "TenantAuthRegistry",
+    "TenantKeyRecord",
+    "TenantRole",
     "ThermostatAction",
     "ThermostatBlockedError",
     "ThermostatDecision",
+    "TokenBucketRateLimiter",
     "WorkloadItem",
     "create_router_http_server",
     "healthcheck",
