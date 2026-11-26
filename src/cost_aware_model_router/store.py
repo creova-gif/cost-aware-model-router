@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -469,6 +470,41 @@ class SQLiteEconomicsStore:
             spend_by_category=spend_by_category,
             spend_by_tier=spend_by_tier,
         )
+
+    def prune_older_than(
+        self,
+        max_age_seconds: float,
+        *,
+        now_epoch: float | None = None,
+    ) -> dict[str, int]:
+        """Delete shadow_comparisons and otel_spans older than max_age_seconds.
+
+        Preserves spend_ledger rows so summarize_economics() totals remain intact.
+        """
+        if not math.isfinite(max_age_seconds) or max_age_seconds <= 0:
+            raise ValueError("max_age_seconds must be a positive finite number")
+        if now_epoch is not None and not math.isfinite(now_epoch):
+            raise ValueError("now_epoch must be finite")
+
+        effective_now = now_epoch if now_epoch is not None else time.time()
+        cutoff_unix_ns = int((effective_now - max_age_seconds) * 1_000_000_000)
+
+        with self._lock:
+            self._ensure_open()
+            with self._conn:
+                shadow_cur = self._conn.execute(
+                    "DELETE FROM shadow_comparisons WHERE created_at_unix_ns < ?",
+                    (cutoff_unix_ns,),
+                )
+                spans_cur = self._conn.execute(
+                    "DELETE FROM otel_spans WHERE created_at_unix_ns < ?",
+                    (cutoff_unix_ns,),
+                )
+
+        return {
+            "shadow_comparisons": shadow_cur.rowcount,
+            "otel_spans": spans_cur.rowcount,
+        }
 
     def is_healthy(self) -> bool:
         """Return True if the store is open and responds to a lightweight SQLite query."""
