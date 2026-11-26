@@ -89,7 +89,11 @@ class ChatCompletionRequest(BaseModel):
     model: str = Field(default="auto")
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
     max_tokens: int | None = Field(default=None, ge=1)
+    stop: str | list[str] | None = None
+    user: str | None = None
+    seed: int | None = None
     stream: bool = False
     request_id: str | None = None
     category: TaskCategory | None = None
