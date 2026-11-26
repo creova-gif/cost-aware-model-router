@@ -360,6 +360,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to a TenantAuthRegistry JSON file (from issue-key)",
     )
     serve_p.add_argument(
+        "--access-log",
+        action="store_true",
+        help="Emit structured JSON access logs (method, path, status_code, duration_ms, request_id) to stdout",
+    )
+    serve_p.add_argument(
+        "--budget-config",
+        type=Path,
+        default=None,
+        help='Optional JSON file containing a list of BudgetPolicy objects (or {"policies": [...]}) for multi-tenant thermostat enforcement',
+    )
+    serve_p.add_argument(
         "--live",
         action="store_true",
         help="Execute against live LLM HTTP endpoint instead of deterministic fixture adapter",
@@ -694,11 +705,43 @@ def _build_live_adapter(
     raise ValueError(f"Unsupported provider {provider!r}")
 
 
+def _load_budget_policies(path: Path) -> list[BudgetPolicy]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Invalid budget config JSON at {path}: {exc}") from exc
+
+    if isinstance(raw, dict):
+        if "policies" not in raw or not isinstance(raw["policies"], list):
+            raise ValueError(
+                f"Budget config object at {path} must contain a 'policies' list"
+            )
+        items = raw["policies"]
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        raise ValueError(
+            f"Budget config at {path} must be a JSON list or an object with a 'policies' list"
+        )
+
+    if not items:
+        raise ValueError(f"Budget config at {path} contains 0 policies")
+
+    policies: list[BudgetPolicy] = []
+    for idx, item in enumerate(items):
+        try:
+            policies.append(BudgetPolicy.model_validate(item))
+        except Exception as exc:
+            raise ValueError(f"Invalid BudgetPolicy at {path}[{idx}]: {exc}") from exc
+    return policies
+
+
 def _build_gateway_for_serve(
     *,
     policy_id: str,
     shadow_policy_id: str | None = None,
     hourly_budget_usd: Decimal | None = None,
+    budget_policies: list[BudgetPolicy] | None = None,
     store: SQLiteEconomicsStore | None = None,
     enable_fallback: bool = False,
     circuit_failure_threshold: int = 3,
@@ -729,7 +772,9 @@ def _build_gateway_for_serve(
             raise ValueError(f"Shadow policy {shadow_policy_id!r} is marked deployable=False")
 
     thermostat: AgentBudgetThermostat | None = None
-    if hourly_budget_usd is not None:
+    if budget_policies is not None:
+        thermostat = AgentBudgetThermostat(policies=budget_policies)
+    elif hourly_budget_usd is not None:
         thermostat = AgentBudgetThermostat(
             policies=[
                 BudgetPolicy(
@@ -961,10 +1006,16 @@ def main(argv: list[str] | None = None) -> int:
                 if args.auth_config is not None
                 else None
             )
+            budget_policies = (
+                _load_budget_policies(args.budget_config)
+                if args.budget_config is not None
+                else None
+            )
             gateway = _build_gateway_for_serve(
                 policy_id=args.policy,
                 shadow_policy_id=args.shadow_policy,
                 hourly_budget_usd=args.hourly_budget_usd,
+                budget_policies=budget_policies,
                 store=store,
                 enable_fallback=args.enable_fallback,
                 circuit_failure_threshold=args.circuit_failure_threshold,
@@ -977,7 +1028,17 @@ def main(argv: list[str] | None = None) -> int:
                 max_cost_usd=Decimal(args.max_cost_usd),
                 concurrency=args.concurrency,
             )
-            server = create_router_http_server(gateway, host=args.host, port=args.port)
+            if args.access_log:
+                server = create_router_http_server(
+                    gateway,
+                    host=args.host,
+                    port=args.port,
+                    access_log=lambda rec: print(
+                        json.dumps(rec, separators=(",", ":")), flush=True
+                    ),
+                )
+            else:
+                server = create_router_http_server(gateway, host=args.host, port=args.port)
         except Exception as exc:
             if store is not None:
                 store.close()
