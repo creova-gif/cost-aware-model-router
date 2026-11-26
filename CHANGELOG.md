@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **OpenAI Model Discovery & Circuit Observability (`server.py`, `resilience.py`):**
+  - `GET /v1/models` (`TenantRole.ROUTER_CLIENT` role) returning OpenAI-compatible model discovery metadata for `"auto"` and configured tier models.
+  - `GET /v1/finops/circuits` (`TenantRole.AUDITOR` role) exposing per-`ModelTier` circuit breaker state and counters via `ProviderCircuitBreaker.snapshot()`.
+- **`cost-router serve` Resilience & Bandit Flags (`cli.py`):**
+  - `--enable-fallback` and `--circuit-failure-threshold` to wrap the serving adapter in `FallbackChainAdapter` + `ProviderCircuitBreaker`.
+  - `--bandit-policy-file` to load a calibrated `ContextualBanditRouter` JSON snapshot at gateway startup.
+- **Repository Hygiene & Documentation:**
+  - Added MIT `LICENSE`, `.github/` issue & pull request templates, and `README.md` CI/version/license badges, CLI command reference, and endpoint docs.
+  - Documented the discovery, circuit observability, and `serve` wiring decisions in `docs/adr/008-openai-models-discovery-and-circuit-observability.md` (`ADR-008`).
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

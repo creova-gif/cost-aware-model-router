@@ -2,6 +2,9 @@
 
 **Evidence-first 3-tier LLM routing, interactive 2D Pareto frontier optimization, autonomous Agent Budget Thermostat, shadow-mode gateway, and SHA-256 auditable FinOps savings receipts.**
 
+[![CI](https://github.com/creova-gif/cost-aware-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/creova-gif/cost-aware-model-router/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-v0.3.0-blue.svg)](CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![Pydantic v2](https://img.shields.io/badge/pydantic-v2-brightgreen.svg)](src/cost_aware_model_router/schemas.py)
 [![Typed: mypy --strict](https://img.shields.io/badge/mypy-strict-checked.svg)](pyproject.toml)
@@ -116,7 +119,7 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 | [telemetry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/telemetry.py) | OpenTelemetry `gen_ai.*` and `cost_router.*` span instrumentation (`OTelSpanRecord`, `InMemorySpanExporter`), declarative policy loader (`load_policies_from_json`), and stratified holdout splitting (`split_workload_holdout`). |
 | [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py) | Zero-dependency Prometheus `0.0.4` / OpenMetrics text exporter (`render_prometheus_metrics`) with label-value escaping (`escape_prometheus_label_value`) for `GET /metrics`. |
 | [judge.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/judge.py) | `LLMJudge` protocol, `DeterministicRubricJudge`, and `OutOfSamplePolicyAuditor` for train/holdout policy generalization audits (`HoldoutGeneralizationReport`). |
-| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `ThreadingHTTPServer` (`create_router_http_server`) exposing `/healthz`, `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/metrics`, and `/dashboard`. |
+| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `ThreadingHTTPServer` (`create_router_http_server`) exposing `/healthz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `/metrics`, and `/dashboard`. |
 | [store.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/store.py) | Thread-safe WAL-mode `SQLiteEconomicsStore` for durable persistence of `SpendLedgerEntry`, `ShadowComparisonRecord`, and `OTelSpanRecord` with 8-place USD string precision and `SpendSummary` aggregation. |
 | [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, `cost-router train-bandit`, and `cost-router serve`. |
 
@@ -282,13 +285,16 @@ The gateway ASGI transport (`create_gateway_asgi_transport` in [gateway.py](file
 Start the zero-dependency `ThreadingHTTPServer` locally or in a non-root container (`Dockerfile`):
 
 ```bash
-# Start local HTTP router with shadow policy and $1.00/hr thermostat budget
+# Start local HTTP router with shadow policy, fallback circuit breaker, bandit policy, and $1.00/hr thermostat budget
 cost-router serve \
   --host 127.0.0.1 \
   --port 8080 \
   --policy threshold-balanced \
   --shadow-policy threshold-aggressive \
-  --hourly-budget-usd 1.00000000
+  --hourly-budget-usd 1.00000000 \
+  --enable-fallback \
+  --circuit-failure-threshold 3 \
+  --bandit-policy-file ./artifacts/bandit/bandit-policy.json
 ```
 
 Query the running server with `curl`:
@@ -296,6 +302,9 @@ Query the running server with `curl`:
 ```bash
 # Liveness / container HEALTHCHECK probe
 curl -s http://127.0.0.1:8080/healthz
+
+# OpenAI-compatible model discovery (ROUTER_CLIENT role)
+curl -s http://127.0.0.1:8080/v1/models
 
 # OpenAI-compatible chat completion (1 MiB max body size; returns 413 if exceeded)
 curl -s -X POST http://127.0.0.1:8080/v1/chat/completions \
@@ -306,6 +315,9 @@ curl -s -X POST http://127.0.0.1:8080/v1/chat/completions \
 
 # FinOps thermostat economics summary (optional ?org_id=... filter)
 curl -s "http://127.0.0.1:8080/v1/finops/economics?org_id=org_demo"
+
+# Per-tier circuit breaker health snapshot (AUDITOR role)
+curl -s http://127.0.0.1:8080/v1/finops/circuits
 
 # Prometheus / OpenMetrics scrape endpoint
 curl -s http://127.0.0.1:8080/metrics
@@ -328,6 +340,22 @@ Train the quality-aware UCB1 `ContextualBanditRouter` ([learner.py](file:///User
 ```bash
 cost-router train-bandit --out ./artifacts/bandit --epochs 4 --quality-floor 0.85
 # Writes ./artifacts/bandit/bandit-policy.json and prints final epoch pass rate + learned context mappings
+```
+
+### CLI Command Reference
+
+```bash
+# 1. Zero-API-key 60-prompt Pareto demo + SHA-256 receipt
+cost-router demo --out ./artifacts/demo --quality-floor 0.92
+
+# 2. Calibrate UCB1 contextual bandit and export bandit-policy.json
+cost-router train-bandit --out ./artifacts/bandit --epochs 4 --quality-floor 0.85
+
+# 3. Serve OpenAI-compatible gateway with fallback circuit breakers and calibrated bandit policy
+cost-router serve \
+  --enable-fallback \
+  --circuit-failure-threshold 3 \
+  --bandit-policy-file ./artifacts/bandit/bandit-policy.json
 ```
 
 ---
@@ -377,9 +405,16 @@ pytest -q
 - **ADR-005 (Multi-Provider Registry & Live FinOps Control-Plane Dashboard):** [docs/adr/005-multi-provider-registry-and-live-dashboard.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/005-multi-provider-registry-and-live-dashboard.md)
 - **ADR-006 (Contextual Bandit Routing & Multi-Tenant API Governance):** [docs/adr/006-contextual-bandit-and-tenant-governance.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/006-contextual-bandit-and-tenant-governance.md)
 - **ADR-007 (Provider Circuit Breakers, Cross-Tier Fallback, Bounded TTL Cache & Bandit Calibration CLI):** [docs/adr/007-provider-circuit-breakers-fallback-and-ttl-cache.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/007-provider-circuit-breakers-fallback-and-ttl-cache.md)
+- **ADR-008 (OpenAI `/v1/models` Discovery, Circuit Observability & `serve` Resilience/Bandit Wiring):** [docs/adr/008-openai-models-discovery-and-circuit-observability.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/008-openai-models-discovery-and-circuit-observability.md)
 - **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **Changelog (Release History):** [CHANGELOG.md](CHANGELOG.md)
 - **STRIDE Threat Model & AI-Router Security Mitigations:** [docs/THREAT_MODEL.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/THREAT_MODEL.md)
 - **Sample Auditable Savings Receipt (Markdown):** [artifacts/demo/savings-receipt.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/artifacts/demo/savings-receipt.md)
 - **Sample Auditable Savings Receipt (JSON):** [artifacts/demo/savings-receipt.json](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/artifacts/demo/savings-receipt.json)
 - **Interactive Pareto Explorer (HTML):** [artifacts/demo/pareto-explorer.html](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/artifacts/demo/pareto-explorer.html)
+
+---
+
+## Contributing
+
+Contributions are welcome! Please review [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md) for local setup, static analysis (`ruff check`, `mypy --strict`), and ADR requirements, use the bug/feature/PR templates in `.github/`, and note that this project is licensed under the MIT License ([LICENSE](LICENSE)).
