@@ -14,9 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Deterministic `export_learned_thresholds()`, `to_json()`, and `from_json()` snapshot persistence.
 - **Multi-Tenant API Governance & Rate Limiting (`governance.py`):**
   - `TenantAuthRegistry`, `TenantKeyRecord`, `TenantRole` (`admin`, `router_client`, `auditor`), `AuthDecision`, and `TokenBucketRateLimiter` providing SHA-256 virtual API keys verified with `hmac.compare_digest`, RBAC enforcement, cross-tenant `org_id` anti-spoofing, and thread-safe per-tenant token-bucket rate limiting.
+- **Provider Circuit Breakers, Fallback Chains & Bounded TTL Cache (`resilience.py`):**
+  - `ProviderCircuitBreaker` (`CircuitState`: `CLOSED -> OPEN -> HALF_OPEN -> CLOSED`, `CircuitBreakerConfig`) providing thread-safe per-`ModelTier` failure isolation with configurable failure/success thresholds and recovery timeout.
+  - `FallbackChainAdapter` wrapping any `ProviderAdapter` with circuit-breaker gating, `DEFAULT_FALLBACK_ORDER` cross-tier fallback, authentic trace provenance preservation, and `ProvenanceTag.UNKNOWN` (`error_code="all_fallback_tiers_unavailable"`) emission when all candidate tiers are unavailable.
+  - `BoundedTTLCache` providing thread-safe `OrderedDict`-backed O(1) LRU + TTL semantic cache eviction keyed by `(org_id, prompt_sha256)`.
+- **Contextual Bandit Calibration CLI (`cli.py`):**
+  - `cost-router train-bandit` subcommand (`--out`, `--epochs`, `--quality-floor`) calibrating `ContextualBanditRouter` over the bundled 60-prompt workload and exporting `bandit-policy.json`.
 - **Top-Level Package Exports & Architecture Record:**
   - Exported `ArmStats`, `AuthDecision`, `ComplexityBucket`, `ContextualBanditConfig`, `ContextualBanditRouter`, `TenantAuthRegistry`, `TenantKeyRecord`, `TenantRole`, and `TokenBucketRateLimiter` in `cost_aware_model_router.__init__`.
-  - Documented the design and failure modes in `docs/adr/006-contextual-bandit-and-tenant-governance.md` (`ADR-006`).
+  - Documented the design and failure modes in `docs/adr/006-contextual-bandit-and-tenant-governance.md` (`ADR-006`) and `docs/adr/007-provider-circuit-breakers-fallback-and-ttl-cache.md` (`ADR-007`).
 
 ## [0.2.0] - 2026-11-26
 
