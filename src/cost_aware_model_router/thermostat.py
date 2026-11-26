@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from collections import deque
+from collections.abc import Callable
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cost_aware_model_router.resilience import BoundedTTLCache
 from cost_aware_model_router.schemas import (
     TIER_ORDER,
     ComplexityFeatures,
@@ -160,11 +163,22 @@ class SpendSummary(BaseModel):
 class AgentBudgetThermostat:
     """Real-time agent budget thermostat, loop breaker, cache, and unit-economics ledger."""
 
-    def __init__(self, policies: list[BudgetPolicy] | None = None) -> None:
+    def __init__(
+        self,
+        policies: list[BudgetPolicy] | None = None,
+        *,
+        cache_max_entries: int = 1024,
+        cache_ttl_seconds: float = 3600.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._policies: dict[tuple[str, str | None], BudgetPolicy] = {}
         self._spend_by_scope: dict[tuple[str, str | None], Decimal] = {}
         self._loop_windows: dict[tuple[str, str], deque[str]] = {}
-        self._response_cache: dict[tuple[str, str], str] = {}
+        self._response_cache = BoundedTTLCache(
+            max_entries=cache_max_entries,
+            ttl_seconds=cache_ttl_seconds,
+            clock=clock,
+        )
         self._ledger: list[SpendLedgerEntry] = []
 
         if policies:
@@ -252,25 +266,25 @@ class AgentBudgetThermostat:
                 ),
             )
 
-        cache_key = (org_id, prompt_hash)
-        if policy.enable_semantic_cache and cache_key in self._response_cache:
-            cached_text = self._response_cache[cache_key]
-            return ThermostatDecision(
-                org_id=org_id,
-                agent_id=agent_id,
-                request_id=request_id,
-                requested_tier=requested_tier,
-                approved_tier=requested_tier,
-                action=ThermostatAction.CACHE_HIT,
-                allowed=True,
-                cached_response=cached_text,
-                budget_utilization_ratio=utilization,
-                remaining_budget_usd=remaining,
-                explanation=(
-                    f"Deterministic prompt cache hit for org={org_id} "
-                    f"(sha256={prompt_hash[:12]}), marginal inference cost $0.00000000."
-                ),
-            )
+        if policy.enable_semantic_cache:
+            cached_text = self._response_cache.get(org_id, prompt_hash)
+            if cached_text is not None:
+                return ThermostatDecision(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    request_id=request_id,
+                    requested_tier=requested_tier,
+                    approved_tier=requested_tier,
+                    action=ThermostatAction.CACHE_HIT,
+                    allowed=True,
+                    cached_response=cached_text,
+                    budget_utilization_ratio=utilization,
+                    remaining_budget_usd=remaining,
+                    explanation=(
+                        f"Deterministic prompt cache hit for org={org_id} "
+                        f"(sha256={prompt_hash[:12]}), marginal inference cost $0.00000000."
+                    ),
+                )
 
         if utilization >= policy.hard_cap_ratio:
             return ThermostatDecision(
@@ -396,7 +410,7 @@ class AgentBudgetThermostat:
             and response_text is not None
         ):
             prompt_hash = compute_prompt_sha256(prompt)
-            self._response_cache[(org_id, prompt_hash)] = response_text
+            self._response_cache.set(org_id, prompt_hash, response_text)
 
         entry = SpendLedgerEntry(
             request_id=request_id,
