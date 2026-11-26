@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Repository Hygiene & Documentation:**
   - Added MIT `LICENSE`, `.github/` issue & pull request templates, and `README.md` CI/version/license badges, CLI command reference, and endpoint docs.
   - Documented the discovery, circuit observability, and `serve` wiring decisions in `docs/adr/008-openai-models-discovery-and-circuit-observability.md` (`ADR-008`).
+- **Enterprise Auth Config, Readiness Probe, Correlation & Dashboard Circuit Health (`server.py`, `cli.py`, `governance.py`, `dashboard.py`):**
+  - Added `GET /readyz` readiness probe returning `200` (`{"status":"ready"}`) or `503` (`{"status":"not_ready","reason":"all_tier_circuits_open"}`) when all tier circuits in `ProviderCircuitBreaker` are open.
+  - Added `X-Request-Id` request correlation propagation/generation and security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`) to HTTP responses.
+  - Added `TenantAuthRegistry` JSON persistence (`to_json` / `from_json`), `cost-router issue-key` CLI subcommand, and `cost-router serve --auth-config` startup loading.
+  - Added a **Circuit Breaker Health** panel to `GET /dashboard` (`render_live_finops_dashboard_html`) with live `/v1/finops/circuits` polling.
+  - Documented these decisions in `docs/adr/009-enterprise-auth-config-readiness-and-correlation.md` (`ADR-009`).
 
 ## [0.3.0] - 2026-11-26
 
