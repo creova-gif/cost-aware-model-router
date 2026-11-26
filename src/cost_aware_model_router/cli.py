@@ -4,9 +4,12 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
+import threading
 from decimal import Decimal
 from pathlib import Path
+from types import FrameType
 
 from cost_aware_model_router.adapters import (
     AnthropicAdapter,
@@ -387,6 +390,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Path to write/update hashed TenantAuthRegistry JSON",
+    )
+
+    revoke_p = sub.add_parser(
+        "revoke-key",
+        help="Revoke (disable) a tenant virtual API key in a hashed TenantAuthRegistry JSON",
+    )
+    revoke_p.add_argument(
+        "--key-id",
+        type=str,
+        required=True,
+        help="Key ID to revoke (disable)",
+    )
+    revoke_p.add_argument(
+        "--auth-config",
+        type=Path,
+        required=True,
+        help="Path to hashed TenantAuthRegistry JSON",
     )
 
     return parser
@@ -815,6 +835,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"token={raw_token}")
         return 0
 
+    if args.command == "revoke-key":
+        try:
+            if not args.auth_config.is_file():
+                raise FileNotFoundError(f"Auth config file not found: {args.auth_config}")
+            registry = TenantAuthRegistry.from_json(args.auth_config.read_text(encoding="utf-8"))
+            record = registry.disable_key(args.key_id)
+            args.auth_config.write_text(registry.to_json() + "\n", encoding="utf-8")
+        except Exception as exc:
+            print(f"Key revocation failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"key_id={record.key_id}")
+        print(f"org_id={record.org_id}")
+        print("enabled=false")
+        print(f"auth_config={args.auth_config}")
+        return 0
+
     if args.command == "serve":
         store: SQLiteEconomicsStore | None = None
         try:
@@ -843,11 +879,17 @@ def main(argv: list[str] | None = None) -> int:
         raw_host, bound_port = server.server_address[:2]
         bound_host = raw_host.decode("utf-8") if isinstance(raw_host, bytes) else raw_host
         print(f"cost-router listening on http://{bound_host}:{bound_port}")
+
+        def _handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
+            threading.Thread(target=server.shutdown, daemon=True).start()
+
+        previous_sigterm = signal.signal(signal.SIGTERM, _handle_sigterm)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
             pass
         finally:
+            signal.signal(signal.SIGTERM, previous_sigterm)
             server.server_close()
             if store is not None:
                 store.close()
