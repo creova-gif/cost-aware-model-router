@@ -283,7 +283,12 @@ def create_router_http_server(
                         if gateway._thermostat is not None
                         else None
                     )
-                    metrics_text = render_prometheus_metrics(spans, summary=summary)
+                    circuits_snap = _build_circuits_snapshot(gateway)
+                    metrics_text = render_prometheus_metrics(
+                        spans,
+                        summary=summary,
+                        circuits=circuits_snap["circuits"] if circuits_snap["enabled"] else None,
+                    )
                     self._send_text(
                         200,
                         "text/plain; version=0.0.4; charset=utf-8",
