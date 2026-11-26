@@ -150,7 +150,14 @@ def create_router_http_server(
                 self._request_id = cached
             return cached
 
-        def _send_bytes(self, status_code: int, content_type: str, body: bytes) -> None:
+        def _send_bytes(
+            self,
+            status_code: int,
+            content_type: str,
+            body: bytes,
+            *,
+            extra_headers: dict[str, str] | None = None,
+        ) -> None:
             request_id = self._current_request_id()
             self.send_response(status_code)
             self.send_header("Content-Type", content_type)
@@ -160,6 +167,9 @@ def create_router_http_server(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
+            if extra_headers is not None:
+                for header_name, header_value in extra_headers.items():
+                    self.send_header(header_name, header_value)
             self.end_headers()
             self.wfile.write(body)
             if access_log is not None:
@@ -174,9 +184,20 @@ def create_router_http_server(
                     }
                 )
 
-        def _send_json(self, status_code: int, payload: dict[str, Any]) -> None:
+        def _send_json(
+            self,
+            status_code: int,
+            payload: dict[str, Any],
+            *,
+            extra_headers: dict[str, str] | None = None,
+        ) -> None:
             encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-            self._send_bytes(status_code, "application/json; charset=utf-8", encoded)
+            self._send_bytes(
+                status_code,
+                "application/json; charset=utf-8",
+                encoded,
+                extra_headers=extra_headers,
+            )
 
         def _send_text(self, status_code: int, content_type: str, text: str) -> None:
             self._send_bytes(status_code, content_type, text.encode("utf-8"))
@@ -196,7 +217,12 @@ def create_router_http_server(
                 claimed_org_id=claimed_org_id,
             )
             if not decision.authenticated or not decision.authorized or decision.rate_limited:
-                self._send_json(decision.status_code, {"error": {"message": decision.reason}})
+                extra_headers = {"Retry-After": "1"} if decision.rate_limited else None
+                self._send_json(
+                    decision.status_code,
+                    {"error": {"message": decision.reason}},
+                    extra_headers=extra_headers,
+                )
                 return False, None
             return True, decision.org_id
 
@@ -482,6 +508,7 @@ def create_router_http_server(
                                 "agent_id": exc.decision.agent_id,
                             }
                         },
+                        extra_headers={"Retry-After": "1"},
                     )
                     return
                 except (ValueError, KeyError, TypeError) as exc:
