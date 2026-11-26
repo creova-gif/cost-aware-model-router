@@ -7,7 +7,7 @@ import math
 import secrets
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Container
 from enum import StrEnum
 from typing import Literal
 
@@ -129,36 +129,35 @@ class TenantAuthRegistry:
         if not org_id.strip():
             raise ValueError("org_id must be non-empty")
 
-        key_id = secrets.token_hex(6)
-        if raw_secret is None:
-            secret_part = secrets.token_urlsafe(24)
-            raw_token = f"crk_{key_id}.{secret_part}"
-            key_prefix = f"crk_{key_id}"
-        else:
-            if not raw_secret.strip():
-                raise ValueError("raw_secret must be non-empty")
-            raw_token = raw_secret
-            if raw_token.startswith("crk_") and "." in raw_token:
-                key_prefix = raw_token.split(".", 1)[0]
-            else:
-                key_prefix = raw_token[: min(8, len(raw_token))]
-
-        key_sha256 = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-        record = TenantKeyRecord(
-            key_id=key_id,
-            org_id=org_id,
-            role=role,
-            key_prefix=key_prefix,
-            key_sha256=key_sha256,
-            rate_limit_rps=rate_limit_rps,
-            burst_capacity=burst_capacity,
-            enabled=True,
-        )
-
         with self._lock:
-            self._records_by_id[key_id] = record
+            raw_token, record = _build_token_and_record(
+                org_id=org_id,
+                role=role,
+                raw_secret=raw_secret,
+                rate_limit_rps=rate_limit_rps,
+                burst_capacity=burst_capacity,
+                existing_ids=self._records_by_id,
+            )
+            self._records_by_id[record.key_id] = record
 
         return raw_token, record
+
+    def rotate_key(self, key_id: str) -> tuple[str, TenantKeyRecord]:
+        """Atomically disable an existing key and issue a replacement with identical metadata."""
+        with self._lock:
+            existing = self._records_by_id.get(key_id)
+            if existing is None:
+                raise KeyError(f"Unknown key_id: {key_id}")
+            self._records_by_id[key_id] = existing.model_copy(update={"enabled": False})
+            raw_token, new_record = _build_token_and_record(
+                org_id=existing.org_id,
+                role=existing.role,
+                rate_limit_rps=existing.rate_limit_rps,
+                burst_capacity=existing.burst_capacity,
+                existing_ids=self._records_by_id,
+            )
+            self._records_by_id[new_record.key_id] = new_record
+            return raw_token, new_record
 
     def set_key_enabled(self, key_id: str, enabled: bool) -> TenantKeyRecord:
         """Enable or disable an existing key by key_id."""
@@ -306,6 +305,46 @@ class TenantAuthRegistry:
             status_code=200,
             reason="Authorized",
         )
+
+
+def _build_token_and_record(
+    *,
+    org_id: str,
+    role: TenantRole,
+    raw_secret: str | None = None,
+    rate_limit_rps: float = 20.0,
+    burst_capacity: int = 40,
+    existing_ids: Container[str] = (),
+) -> tuple[str, TenantKeyRecord]:
+    key_id = secrets.token_hex(6)
+    while key_id in existing_ids:
+        key_id = secrets.token_hex(6)
+
+    if raw_secret is None:
+        secret_part = secrets.token_urlsafe(24)
+        raw_token = f"crk_{key_id}.{secret_part}"
+        key_prefix = f"crk_{key_id}"
+    else:
+        if not raw_secret.strip():
+            raise ValueError("raw_secret must be non-empty")
+        raw_token = raw_secret
+        if raw_token.startswith("crk_") and "." in raw_token:
+            key_prefix = raw_token.split(".", 1)[0]
+        else:
+            key_prefix = raw_token[: min(8, len(raw_token))]
+
+    key_sha256 = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    record = TenantKeyRecord(
+        key_id=key_id,
+        org_id=org_id,
+        role=role,
+        key_prefix=key_prefix,
+        key_sha256=key_sha256,
+        rate_limit_rps=rate_limit_rps,
+        burst_capacity=burst_capacity,
+        enabled=True,
+    )
+    return raw_token, record
 
 
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
