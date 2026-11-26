@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import math
 import secrets
 import threading
@@ -172,6 +173,38 @@ class TenantAuthRegistry:
     def disable_key(self, key_id: str) -> TenantKeyRecord:
         """Disable an existing key by key_id."""
         return self.set_key_enabled(key_id, False)
+
+    def list_records(self) -> list[TenantKeyRecord]:
+        """Return a thread-safe snapshot of key records sorted by key_id."""
+        with self._lock:
+            return sorted(self._records_by_id.values(), key=lambda rec: rec.key_id)
+
+    def to_json(self) -> str:
+        """Serialize non-secret key records (with SHA-256 digests) to JSON."""
+        payload = {"records": [rec.model_dump(mode="json") for rec in self.list_records()]}
+        return json.dumps(payload, indent=2)
+
+    @classmethod
+    def from_json(
+        cls,
+        raw_json: str,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        rate_limiter: TokenBucketRateLimiter | None = None,
+    ) -> TenantAuthRegistry:
+        """Load a TenantAuthRegistry from a JSON string produced by to_json()."""
+        payload = json.loads(raw_json)
+        if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
+            raise ValueError(
+                "Invalid TenantAuthRegistry JSON: expected an object with a 'records' list"
+            )
+        registry = cls(clock=clock, rate_limiter=rate_limiter)
+        for item in payload["records"]:
+            record = TenantKeyRecord.model_validate(item)
+            if record.key_id in registry._records_by_id:
+                raise ValueError(f"Duplicate key_id in auth config: {record.key_id}")
+            registry._records_by_id[record.key_id] = record
+        return registry
 
     def authenticate_and_authorize(
         self,
