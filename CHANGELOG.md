@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-26
+
+### Added
+
+- **Quality-Aware Contextual Bandit Router (`learner.py`):**
+  - `ContextualBanditRouter`, `ContextualBanditConfig`, `ArmStats`, and `ComplexityBucket` (`low`, `medium`, `high` via `bucket_for_score`) implementing zero-dependency UCB1 exploration + quality-floor-aware goodput optimization across `(TaskCategory, ComplexityBucket)` contexts.
+  - Deterministic `export_learned_thresholds()`, `to_json()`, and `from_json()` snapshot persistence.
+- **Multi-Tenant API Governance & Rate Limiting (`governance.py`):**
+  - `TenantAuthRegistry`, `TenantKeyRecord`, `TenantRole` (`admin`, `router_client`, `auditor`), `AuthDecision`, and `TokenBucketRateLimiter` providing SHA-256 virtual API keys verified with `hmac.compare_digest`, RBAC enforcement, cross-tenant `org_id` anti-spoofing, and thread-safe per-tenant token-bucket rate limiting.
+- **Top-Level Package Exports & Architecture Record:**
+  - Exported `ArmStats`, `AuthDecision`, `ComplexityBucket`, `ContextualBanditConfig`, `ContextualBanditRouter`, `TenantAuthRegistry`, `TenantKeyRecord`, `TenantRole`, and `TokenBucketRateLimiter` in `cost_aware_model_router.__init__`.
+  - Documented the design and failure modes in `docs/adr/006-contextual-bandit-and-tenant-governance.md` (`ADR-006`).
+
 ## [0.2.0] - 2026-11-26
 
 ### Added
