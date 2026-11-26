@@ -37,6 +37,7 @@ from cost_aware_model_router.schemas import (
     WorkloadItem,
 )
 from cost_aware_model_router.server import create_router_http_server
+from cost_aware_model_router.store import SQLiteEconomicsStore
 from cost_aware_model_router.telemetry import InMemorySpanExporter, OTelSpanRecord
 from cost_aware_model_router.thermostat import (
     AgentBudgetThermostat,
@@ -78,6 +79,7 @@ __all__ = [
     "ProvenanceTag",
     "ProviderAdapter",
     "RubricCriterion",
+    "SQLiteEconomicsStore",
     "SavingsReceipt",
     "ShadowComparisonRecord",
     "SpendLedgerEntry",
