@@ -68,6 +68,8 @@ from cost_aware_model_router.thermostat import (
     ThermostatDecision,
 )
 
+__version__ = "0.3.0"
+
 
 def healthcheck() -> str:
     return "ok"
@@ -123,6 +125,7 @@ __all__ = [
     "ThermostatDecision",
     "TokenBucketRateLimiter",
     "WorkloadItem",
+    "__version__",
     "create_router_http_server",
     "healthcheck",
     "render_live_finops_dashboard_html",

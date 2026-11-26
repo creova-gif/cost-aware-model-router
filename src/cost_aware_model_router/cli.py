@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import FrameType
 
+from cost_aware_model_router import __version__
 from cost_aware_model_router.adapters import (
     AnthropicAdapter,
     DeterministicFixtureAdapter,
@@ -165,6 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="cost-router",
         description="Cost-Aware Model Router — 3-Tier Pareto Optimizer & Auditable Savings Receipt CLI",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     demo_p = sub.add_parser(
