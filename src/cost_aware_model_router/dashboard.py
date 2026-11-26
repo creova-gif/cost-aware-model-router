@@ -11,6 +11,7 @@ def render_live_finops_dashboard_html(
     economics: dict[str, Any] | None = None,
     shadow_summary: dict[str, Any] | None = None,
     recent_spans: list[dict[str, Any]] | None = None,
+    circuits: dict[str, Any] | None = None,
     *,
     title: str = "Cost-Aware Model Router — Live FinOps Control Plane",
 ) -> str:
@@ -28,6 +29,7 @@ def render_live_finops_dashboard_html(
             "records": [],
         },
         "recent_spans": recent_spans if recent_spans is not None else [],
+        "circuits": circuits if circuits is not None else {"enabled": False, "circuits": {}},
     }
     safe_snapshot = escape_json_for_script_tag(json.dumps(snapshot, separators=(",", ":")))
     safe_title = html.escape(title, quote=True)
@@ -74,6 +76,7 @@ def render_live_finops_dashboard_html(
   .badge {{ border: 1px solid var(--border-strong); padding: 3px 8px; font-size: 11px; font-family: ui-monospace, monospace; background: #f4f4f5; border-radius: 2px; }}
   .badge-pass {{ background: var(--pass-bg); color: var(--pass-fg); border-color: #34d399; }}
   .badge-warn {{ background: var(--warn-bg); color: var(--warn-fg); border-color: #fbbf24; }}
+  .badge-fail {{ background: var(--fail-bg); color: var(--fail-fg); border-color: #f87171; }}
   .btn {{ border: 1px solid var(--border-strong); background: var(--accent); color: #ffffff; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 3px; }}
   .btn:hover {{ background: #1e293b; }}
   .btn:disabled {{ opacity: 0.6; cursor: wait; }}
@@ -212,6 +215,20 @@ def render_live_finops_dashboard_html(
       <tbody id="tbody-spans"></tbody>
     </table>
     <div class="empty-state" id="empty-spans">No OpenTelemetry spans recorded yet.</div>
+  </div>
+
+  <div class="panel">
+    <h2>4. Circuit Breaker Health</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Model Tier</th>
+          <th>Circuit State</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-circuits"></tbody>
+    </table>
+    <div class="empty-state" id="empty-circuits">Circuit breaker disabled</div>
   </div>
 </div>
 
@@ -373,6 +390,43 @@ def render_live_finops_dashboard_html(
         spansTbody.appendChild(tr);
       }});
     }}
+
+    const circuitsPayload = state.circuits || {{ enabled: false, circuits: {{}} }};
+    const circuitsTbody = document.getElementById("tbody-circuits");
+    const emptyCircuits = document.getElementById("empty-circuits");
+    clearNode(circuitsTbody);
+    if (!circuitsPayload.enabled) {{
+      emptyCircuits.textContent = "Circuit breaker disabled";
+      emptyCircuits.style.display = "block";
+    }} else {{
+      const circuitEntries = Object.entries(circuitsPayload.circuits || {{}});
+      if (circuitEntries.length === 0) {{
+        emptyCircuits.textContent = "No circuit breaker tiers recorded.";
+        emptyCircuits.style.display = "block";
+      }} else {{
+        emptyCircuits.style.display = "none";
+        circuitEntries.forEach(function(pair) {{
+          const tr = document.createElement("tr");
+          addCell(tr, pair[0], "mono");
+          const stateVal = String(pair[1] || "");
+          let stateClass = "badge mono";
+          if (stateVal === "closed") {{
+            stateClass = "badge badge-pass mono";
+          }} else if (stateVal === "half_open") {{
+            stateClass = "badge badge-warn mono";
+          }} else if (stateVal === "open") {{
+            stateClass = "badge badge-fail mono";
+          }}
+          const td = document.createElement("td");
+          const span = document.createElement("span");
+          span.className = stateClass;
+          span.textContent = stateVal;
+          td.appendChild(span);
+          tr.appendChild(td);
+          circuitsTbody.appendChild(tr);
+        }});
+      }}
+    }}
   }}
 
   async function refreshLiveMetrics() {{
@@ -381,9 +435,10 @@ def render_live_finops_dashboard_html(
     btn.disabled = true;
     statusEl.textContent = "Refreshing live FinOps metrics...";
     try {{
-      const [econResp, shadowResp] = await Promise.all([
+      const [econResp, shadowResp, circuitsResp] = await Promise.all([
         fetch("/v1/finops/economics", {{ cache: "no-store" }}),
-        fetch("/v1/finops/shadow-summary", {{ cache: "no-store" }})
+        fetch("/v1/finops/shadow-summary", {{ cache: "no-store" }}),
+        fetch("/v1/finops/circuits", {{ cache: "no-store" }})
       ]);
       if (econResp.ok) {{
         state.economics = await econResp.json();
@@ -392,6 +447,15 @@ def render_live_finops_dashboard_html(
       }}
       if (shadowResp.ok) {{
         state.shadow_summary = await shadowResp.json();
+      }}
+      if (circuitsResp.ok) {{
+        state.circuits = await circuitsResp.json();
+      }} else if (
+        circuitsResp.status === 401 ||
+        circuitsResp.status === 403 ||
+        circuitsResp.status === 404
+      ) {{
+        // Gracefully tolerate unauthenticated or unavailable circuits endpoint.
       }}
       renderDashboard();
       statusEl.textContent = "Last refreshed at " + new Date().toLocaleTimeString();
