@@ -16,6 +16,7 @@ from cost_aware_model_router.adapters import (
     generate_bundled_workload,
     load_bundled_catalog,
 )
+from cost_aware_model_router.evaluators import evaluate_trace
 from cost_aware_model_router.gateway import (
     ChatCompletionRequest,
     ChatMessage,
@@ -25,6 +26,10 @@ from cost_aware_model_router.gateway import (
 from cost_aware_model_router.judge import (
     HoldoutGeneralizationReport,
     OutOfSamplePolicyAuditor,
+)
+from cost_aware_model_router.learner import (
+    ContextualBanditConfig,
+    ContextualBanditRouter,
 )
 from cost_aware_model_router.policies import (
     build_evaluation_matrix,
@@ -256,6 +261,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum pass rate floor q_min in [0.0, 1.0] (default: 0.90)",
     )
 
+    bandit_p = sub.add_parser(
+        "train-bandit",
+        help="Train ContextualBanditRouter on the bundled 60-prompt workload and export policy JSON",
+    )
+    bandit_p.add_argument(
+        "--out",
+        type=Path,
+        default=Path("./artifacts/bandit"),
+        help="Output directory for bandit-policy.json (default: ./artifacts/bandit)",
+    )
+    bandit_p.add_argument(
+        "--epochs",
+        type=int,
+        default=4,
+        help="Number of training passes over the bundled workload (must be > 0, default: 4)",
+    )
+    bandit_p.add_argument(
+        "--quality-floor",
+        type=float,
+        default=0.85,
+        help="Minimum pass rate floor q_min in [0.0, 1.0] (default: 0.85)",
+    )
+
     serve_p = sub.add_parser(
         "serve",
         help="Start a local OpenAI-compatible HTTP router server",
@@ -449,6 +477,55 @@ def _print_holdout_summary(report: HoldoutGeneralizationReport, out_dir: Path) -
     print(f"Artifacts written to: {out_dir}")
 
 
+async def _run_train_bandit(
+    out_dir: Path,
+    epochs: int,
+    quality_floor: float,
+) -> tuple[ContextualBanditRouter, float]:
+    if epochs <= 0:
+        raise ValueError(f"--epochs must be > 0, got {epochs}")
+    config = ContextualBanditConfig(min_quality_floor=quality_floor)
+    router = ContextualBanditRouter(config=config)
+    workload = generate_bundled_workload()
+    catalog = load_bundled_catalog()
+    adapter = DeterministicFixtureAdapter()
+    traces = await adapter.execute_workload(workload, catalog)
+
+    final_pass_rate = 0.0
+    for _ in range(epochs):
+        epoch_passes = 0
+        for item in workload:
+            tier, _ = router.select_tier(item)
+            trace = traces[(item.request_id, tier)]
+            verdict = evaluate_trace(trace, item.evaluators)
+            if verdict.passed:
+                epoch_passes += 1
+            router.update(item, tier, passed=verdict.passed, cost_usd=trace.cost_usd)
+        final_pass_rate = epoch_passes / len(workload)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "bandit-policy.json").write_text(router.to_json() + "\n", encoding="utf-8")
+    return router, final_pass_rate
+
+
+def _print_bandit_summary(
+    router: ContextualBanditRouter,
+    epochs: int,
+    final_pass_rate: float,
+    out_dir: Path,
+) -> None:
+    print(
+        f"Trained ContextualBanditRouter for {epochs} epochs "
+        f"(quality_floor={router.config.min_quality_floor:.2f})"
+    )
+    print(f"Final Epoch Pass Rate: {final_pass_rate * 100:.1f}%")
+    print("Learned (TaskCategory, ComplexityBucket) -> ModelTier:")
+    for ctx_key, tier_val in router.export_learned_thresholds().items():
+        cat_str, bucket_str = ctx_key.split(":", maxsplit=1)
+        print(f"  ({cat_str}, {bucket_str}) -> {tier_val}")
+    print(f"Artifacts written to: {out_dir}")
+
+
 def _build_gateway_for_serve(
     *,
     policy_id: str,
@@ -608,6 +685,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Holdout audit failed: {exc}", file=sys.stderr)
             return 1
         _print_holdout_summary(report, args.out)
+        return 0
+
+    if args.command == "train-bandit":
+        try:
+            router, final_pass_rate = asyncio.run(
+                _run_train_bandit(
+                    out_dir=args.out,
+                    epochs=args.epochs,
+                    quality_floor=args.quality_floor,
+                )
+            )
+        except Exception as exc:
+            print(f"Bandit training failed: {exc}", file=sys.stderr)
+            return 1
+        _print_bandit_summary(router, args.epochs, final_pass_rate, args.out)
         return 0
 
     if args.command == "serve":
