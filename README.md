@@ -279,6 +279,7 @@ The gateway ASGI transport (`create_gateway_asgi_transport` in [gateway.py](file
 - `cost_router_spend_usd_total{org_id,tier,provenance}` (counter, 8-place USD `Decimal`)
 - `cost_router_latency_ms_sum{org_id,tier}` / `cost_router_latency_ms_count{org_id,tier}` (summary)
 - `cost_router_cache_hits_total` (counter) and `cost_router_goodput_usd` (gauge) when a thermostat is attached
+- `cost_router_circuit_state` (gauge) for per-tier circuit breaker state when circuit breakers are configured
 
 ### 8. Serve the Local OpenAI-Compatible HTTP Gateway (`cost-router serve`)
 
@@ -364,6 +365,12 @@ docker build -t cost-aware-model-router .
 docker run --rm -p 8080:8080 cost-aware-model-router
 ```
 
+Or start the production deployment with Docker Compose ([docker-compose.yml](docker-compose.yml)), which persists SQLite state in the `cost_router_data` volume (`/data/economics.db`), enables fallback routing (`--enable-fallback`), and probes `http://127.0.0.1:8080/readyz`:
+
+```bash
+docker compose up -d
+```
+
 ### 9. Calibrate Contextual Bandit Policy (`cost-router train-bandit`)
 
 Train the quality-aware UCB1 `ContextualBanditRouter` ([learner.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/learner.py)) over the bundled 60-prompt workload and export learned `(TaskCategory, ComplexityBucket) -> ModelTier` mappings:
@@ -376,6 +383,9 @@ cost-router train-bandit --out ./artifacts/bandit --epochs 4 --quality-floor 0.8
 ### CLI Command Reference
 
 ```bash
+# 0. Print installed CLI version
+cost-router --version
+
 # 1. Zero-API-key 60-prompt Pareto demo + SHA-256 receipt
 cost-router demo --out ./artifacts/demo --quality-floor 0.92
 
