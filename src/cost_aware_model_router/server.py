@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 import uuid
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -53,6 +54,73 @@ def _build_circuits_snapshot(gateway: OpenAIRouterGateway) -> dict[str, Any]:
             "circuits": {tier.value: state.value for tier, state in cb.snapshot().items()},
         }
     return {"enabled": False, "circuits": {}}
+
+
+class _AsyncLoopRunner:
+    """Thread-safe runner owning a single asyncio event loop on a daemon thread."""
+
+    def __init__(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            name="router-async-loop",
+            daemon=True,
+        )
+        self._thread.start()
+        self._ready.wait()
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.call_soon(self._ready.set)
+        try:
+            self._loop.run_forever()
+        finally:
+            try:
+                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            finally:
+                self._loop.close()
+
+    def run[T](self, coro: Coroutine[Any, Any, T]) -> T:
+        """Execute a coroutine on the shared background event loop and return its result."""
+        with self._lock:
+            if self._closed:
+                coro.close()
+                raise RuntimeError("Async loop runner is closed")
+            loop = self._loop
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
+    def close(self) -> None:
+        """Stop the background event loop, wait for its thread, and close the loop."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        if self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if threading.current_thread() is not self._thread:
+            self._thread.join(timeout=5.0)
+
+
+class _RouterHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a shared background asyncio event loop."""
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        request_handler_class: type[BaseHTTPRequestHandler],
+    ) -> None:
+        super().__init__(server_address, request_handler_class)
+        self.loop_runner = _AsyncLoopRunner()
+
+    def server_close(self) -> None:
+        """Shut down the shared background event loop before closing the HTTP server."""
+        try:
+            self.loop_runner.close()
+        finally:
+            super().server_close()
 
 
 def create_router_http_server(
@@ -327,7 +395,10 @@ def create_router_http_server(
 
                 try:
                     chat_req = ChatCompletionRequest.model_validate(raw_body)
-                    chat_resp = asyncio.run(gateway.handle_chat_completion(chat_req))
+                    server = self.server
+                    if not isinstance(server, _RouterHTTPServer):
+                        raise TypeError("Expected _RouterHTTPServer")
+                    chat_resp = server.loop_runner.run(gateway.handle_chat_completion(chat_req))
                 except ThermostatBlockedError as exc:
                     self._send_json(
                         429,
@@ -349,4 +420,4 @@ def create_router_http_server(
             except Exception:
                 self._send_json(500, {"error": {"message": "Internal server error"}})
 
-    return ThreadingHTTPServer((host, port), _RouterRequestHandler)
+    return _RouterHTTPServer((host, port), _RouterRequestHandler)
