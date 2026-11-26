@@ -20,6 +20,7 @@ from cost_aware_model_router.gateway import (
 from cost_aware_model_router.governance import TenantRole
 from cost_aware_model_router.metrics import render_prometheus_metrics
 from cost_aware_model_router.resilience import CircuitState, ProviderCircuitBreaker
+from cost_aware_model_router.schemas import ModelTier
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
 _REQUEST_ID_MAX_LEN = 128
@@ -317,61 +318,108 @@ def create_router_http_server(
             except Exception:
                 self._send_json(500, {"error": {"message": "Internal server error"}})
 
+        def _read_json_object_body(self) -> dict[str, Any] | None:
+            raw_content_length = self.headers.get("Content-Length")
+            if raw_content_length is None:
+                self._send_json(400, {"error": {"message": "Missing Content-Length header"}})
+                return None
+            try:
+                content_length = int(raw_content_length)
+            except ValueError:
+                self._send_json(400, {"error": {"message": "Invalid Content-Length header"}})
+                return None
+
+            if content_length < 0:
+                self._send_json(400, {"error": {"message": "Invalid Content-Length header"}})
+                return None
+
+            if content_length > MAX_REQUEST_BODY_BYTES:
+                self._send_json(
+                    413,
+                    {
+                        "error": {
+                            "message": (
+                                f"Payload too large: {content_length} bytes exceeds "
+                                f"maximum of {MAX_REQUEST_BODY_BYTES} bytes"
+                            )
+                        }
+                    },
+                )
+                return None
+
+            body_bytes = self.rfile.read(content_length)
+            if len(body_bytes) != content_length:
+                self._send_json(400, {"error": {"message": "Incomplete request body"}})
+                return None
+
+            try:
+                raw_body = json.loads(body_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                self._send_json(400, {"error": {"message": f"Invalid JSON request body: {exc}"}})
+                return None
+
+            if not isinstance(raw_body, dict):
+                self._send_json(400, {"error": {"message": "Request body must be a JSON object"}})
+                return None
+
+            return raw_body
+
         def do_POST(self) -> None:
             self._request_id = _resolve_request_id(self.headers)
             try:
                 parsed = urlsplit(self.path)
                 path = parsed.path
 
-                if path != "/v1/chat/completions":
-                    self._send_json(404, {"error": {"message": f"Unsupported route POST {path}"}})
-                    return
+                if path == "/v1/finops/circuits/reset":
+                    ok, _ = self._authorize(required_role=TenantRole.ADMIN)
+                    if not ok:
+                        return
 
-                raw_content_length = self.headers.get("Content-Length")
-                if raw_content_length is None:
-                    self._send_json(400, {"error": {"message": "Missing Content-Length header"}})
-                    return
-                try:
-                    content_length = int(raw_content_length)
-                except ValueError:
-                    self._send_json(400, {"error": {"message": "Invalid Content-Length header"}})
-                    return
+                    cb = getattr(gateway.adapter, "circuit_breaker", None)
+                    if not isinstance(cb, ProviderCircuitBreaker):
+                        self._send_json(
+                            400,
+                            {"error": {"message": "Circuit breaker is not enabled on this gateway"}},
+                        )
+                        return
 
-                if content_length < 0:
-                    self._send_json(400, {"error": {"message": "Invalid Content-Length header"}})
-                    return
+                    raw_content_length = self.headers.get("Content-Length")
+                    if raw_content_length is None or raw_content_length.strip() == "0":
+                        body: dict[str, Any] = {}
+                    else:
+                        parsed_body = self._read_json_object_body()
+                        if parsed_body is None:
+                            return
+                        body = parsed_body
 
-                if content_length > MAX_REQUEST_BODY_BYTES:
+                    raw_tier = body.get("tier")
+                    target_tier: ModelTier | None = None
+                    if raw_tier is not None:
+                        try:
+                            target_tier = ModelTier(str(raw_tier))
+                        except ValueError:
+                            self._send_json(
+                                400, {"error": {"message": f"Invalid model tier: {raw_tier!r}"}}
+                            )
+                            return
+
+                    cb.reset(target_tier)
                     self._send_json(
-                        413,
+                        200,
                         {
-                            "error": {
-                                "message": (
-                                    f"Payload too large: {content_length} bytes exceeds "
-                                    f"maximum of {MAX_REQUEST_BODY_BYTES} bytes"
-                                )
-                            }
+                            "reset": True,
+                            "tier": target_tier.value if target_tier is not None else "all",
+                            **_build_circuits_snapshot(gateway),
                         },
                     )
                     return
 
-                body_bytes = self.rfile.read(content_length)
-                if len(body_bytes) != content_length:
-                    self._send_json(400, {"error": {"message": "Incomplete request body"}})
+                if path != "/v1/chat/completions":
+                    self._send_json(404, {"error": {"message": f"Unsupported route POST {path}"}})
                     return
 
-                try:
-                    raw_body = json.loads(body_bytes.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    self._send_json(
-                        400, {"error": {"message": f"Invalid JSON request body: {exc}"}}
-                    )
-                    return
-
-                if not isinstance(raw_body, dict):
-                    self._send_json(
-                        400, {"error": {"message": "Request body must be a JSON object"}}
-                    )
+                raw_body = self._read_json_object_body()
+                if raw_body is None:
                     return
 
                 if gateway.auth_registry is not None:
