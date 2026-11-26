@@ -23,6 +23,7 @@ from cost_aware_model_router.gateway import (
     OpenAIRouterGateway,
     ThermostatBlockedError,
 )
+from cost_aware_model_router.governance import TenantAuthRegistry, TenantRole
 from cost_aware_model_router.judge import (
     HoldoutGeneralizationReport,
     OutOfSamplePolicyAuditor,
@@ -346,6 +347,47 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to a trained ContextualBanditRouter JSON artifact (from train-bandit)",
     )
+    serve_p.add_argument(
+        "--auth-config",
+        type=Path,
+        default=None,
+        help="Optional path to a TenantAuthRegistry JSON file (from issue-key)",
+    )
+
+    issue_p = sub.add_parser(
+        "issue-key",
+        help="Issue a tenant virtual API key and persist its SHA-256 digest to a JSON registry",
+    )
+    issue_p.add_argument(
+        "--org-id",
+        type=str,
+        required=True,
+        help="Tenant organization ID",
+    )
+    issue_p.add_argument(
+        "--role",
+        choices=[r.value for r in TenantRole],
+        default=TenantRole.ROUTER_CLIENT.value,
+        help=f"Tenant RBAC role (default: {TenantRole.ROUTER_CLIENT.value})",
+    )
+    issue_p.add_argument(
+        "--rate-limit-rps",
+        type=float,
+        default=20.0,
+        help="Per-tenant token-bucket refill rate in requests/sec (default: 20.0)",
+    )
+    issue_p.add_argument(
+        "--burst-capacity",
+        type=int,
+        default=40,
+        help="Per-tenant token-bucket burst capacity (default: 40)",
+    )
+    issue_p.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Path to write/update hashed TenantAuthRegistry JSON",
+    )
 
     return parser
 
@@ -557,6 +599,7 @@ def _build_gateway_for_serve(
     enable_fallback: bool = False,
     circuit_failure_threshold: int = 3,
     bandit_policy_file: Path | None = None,
+    auth_registry: TenantAuthRegistry | None = None,
 ) -> OpenAIRouterGateway:
     suite = default_policy_suite()
     policies_by_id = {p.policy_id: p for p in suite}
@@ -613,6 +656,7 @@ def _build_gateway_for_serve(
         thermostat=thermostat,
         store=store,
         bandit_router=bandit_router,
+        auth_registry=auth_registry,
     )
 
 
@@ -745,10 +789,41 @@ def main(argv: list[str] | None = None) -> int:
         _print_bandit_summary(router, args.epochs, final_pass_rate, args.out)
         return 0
 
+    if args.command == "issue-key":
+        try:
+            registry = (
+                TenantAuthRegistry.from_json(args.out.read_text(encoding="utf-8"))
+                if args.out.exists()
+                else TenantAuthRegistry()
+            )
+            raw_token, record = registry.issue_key(
+                args.org_id,
+                TenantRole(args.role),
+                rate_limit_rps=args.rate_limit_rps,
+                burst_capacity=args.burst_capacity,
+            )
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(registry.to_json() + "\n", encoding="utf-8")
+        except Exception as exc:
+            print(f"Key issuance failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"key_id={record.key_id}")
+        print(f"org_id={record.org_id}")
+        print(f"role={record.role.value}")
+        print(f"key_prefix={record.key_prefix}")
+        print(f"out={args.out}")
+        print(f"token={raw_token}")
+        return 0
+
     if args.command == "serve":
         store: SQLiteEconomicsStore | None = None
         try:
             store = SQLiteEconomicsStore(args.db_path) if args.db_path is not None else None
+            auth_registry = (
+                TenantAuthRegistry.from_json(args.auth_config.read_text(encoding="utf-8"))
+                if args.auth_config is not None
+                else None
+            )
             gateway = _build_gateway_for_serve(
                 policy_id=args.policy,
                 shadow_policy_id=args.shadow_policy,
@@ -757,6 +832,7 @@ def main(argv: list[str] | None = None) -> int:
                 enable_fallback=args.enable_fallback,
                 circuit_failure_threshold=args.circuit_failure_threshold,
                 bandit_policy_file=args.bandit_policy_file,
+                auth_registry=auth_registry,
             )
             server = create_router_http_server(gateway, host=args.host, port=args.port)
         except Exception as exc:
