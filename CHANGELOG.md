@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `TenantAuthRegistry` JSON persistence (`to_json` / `from_json`), `cost-router issue-key` CLI subcommand, and `cost-router serve --auth-config` startup loading.
   - Added a **Circuit Breaker Health** panel to `GET /dashboard` (`render_live_finops_dashboard_html`) with live `/v1/finops/circuits` polling.
   - Documented these decisions in `docs/adr/009-enterprise-auth-config-readiness-and-correlation.md` (`ADR-009`).
+- **Live Serve Provider Wiring, Key Revocation, Graceful Shutdown & Store Readiness (`cli.py`, `store.py`, `server.py`):**
+  - Added `cost-router revoke-key` CLI subcommand (`--key-id`, `--auth-config`) to disable tenant virtual API keys (`enabled=false`) while preserving audit history.
+  - Added `SIGTERM` graceful shutdown handling to `cost-router serve` so `server.shutdown()`, `server.server_close()`, and `SQLiteEconomicsStore.close()` run cleanly on container stop.
+  - Shared `_build_live_adapter()` across `cost-router replay --live` and `cost-router serve --live --provider openai|anthropic`.
+  - Added `SQLiteEconomicsStore.is_healthy()` and wired it into `GET /readyz` (returning `503` when the SQLite store is unhealthy or all tier circuits are open).
+  - Documented these decisions in `docs/adr/010-live-serve-provider-and-store-readiness.md` (`ADR-010`).
 
 ## [0.3.0] - 2026-11-26
 
