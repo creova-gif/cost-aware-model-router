@@ -355,6 +355,14 @@ class OpenAIRouterGateway:
         self._shadow_records: list[ShadowComparisonRecord] = []
 
     @property
+    def adapter(self) -> ProviderAdapter:
+        return self._adapter
+
+    @property
+    def catalog(self) -> PricingCatalog:
+        return self._catalog
+
+    @property
     def span_exporter(self) -> InMemorySpanExporter:
         return self._span_exporter
 

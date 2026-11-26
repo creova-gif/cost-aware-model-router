@@ -14,6 +14,7 @@ from cost_aware_model_router.gateway import (
 )
 from cost_aware_model_router.governance import TenantRole
 from cost_aware_model_router.metrics import render_prometheus_metrics
+from cost_aware_model_router.resilience import ProviderCircuitBreaker
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
 
@@ -79,6 +80,46 @@ def create_router_http_server(
 
                 if path == "/healthz":
                     self._send_json(200, {"status": "ok"})
+                    return
+
+                if path == "/v1/models":
+                    ok, _ = self._authorize(required_role=TenantRole.ROUTER_CLIENT)
+                    if not ok:
+                        return
+                    self._send_json(
+                        200,
+                        {
+                            "object": "list",
+                            "data": [
+                                {
+                                    "id": spec.model_id,
+                                    "object": "model",
+                                    "owned_by": spec.provider,
+                                    "tier": tier.value,
+                                }
+                                for tier, spec in gateway.catalog.models.items()
+                            ],
+                        },
+                    )
+                    return
+
+                if path == "/v1/finops/circuits":
+                    ok, _ = self._authorize(required_role=TenantRole.AUDITOR)
+                    if not ok:
+                        return
+                    cb = getattr(gateway.adapter, "circuit_breaker", None)
+                    if isinstance(cb, ProviderCircuitBreaker):
+                        self._send_json(
+                            200,
+                            {
+                                "enabled": True,
+                                "circuits": {
+                                    tier.value: state.value for tier, state in cb.snapshot().items()
+                                },
+                            },
+                        )
+                        return
+                    self._send_json(200, {"enabled": False, "circuits": {}})
                     return
 
                 if path == "/v1/finops/shadow-summary":
