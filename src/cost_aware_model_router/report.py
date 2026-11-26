@@ -57,6 +57,35 @@ def render_pareto_explorer_html(receipt: SavingsReceipt, markdown_receipt: str) 
     line-height: 1.45;
   }}
   .container {{ max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }}
+  main {{ display: flex; flex-direction: column; gap: 16px; }}
+  .skip-link {{
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--accent);
+    color: #ffffff;
+    padding: 8px 14px;
+    z-index: 1000;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0 0 4px 0;
+  }}
+  .skip-link:focus {{
+    top: 0;
+  }}
+  :focus-visible {{
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }}
+  @media (prefers-reduced-motion: reduce) {{
+    *, *::before, *::after {{
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }}
+  }}
   .panel {{ background: var(--panel); border: 1px solid var(--border); padding: 16px 18px; border-radius: 4px; }}
   .header-bar {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }}
   h1 {{ font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }}
@@ -71,7 +100,7 @@ def render_pareto_explorer_html(receipt: SavingsReceipt, markdown_receipt: str) 
   .btn {{ border: 1px solid var(--border-strong); background: var(--panel); color: var(--text); padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 3px; }}
   .btn:hover {{ background: #f4f4f5; }}
   .btn-active {{ background: var(--accent); color: #fff; }}
-  . btn-active:hover {{ background: #1e293b; }}
+  .btn-active:hover {{ background: #1e293b; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }}
   .kpi-card {{ background: var(--panel); border: 1px solid var(--border); padding: 14px; border-radius: 4px; }}
   .kpi-label {{ font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); }}
@@ -93,8 +122,9 @@ def render_pareto_explorer_html(receipt: SavingsReceipt, markdown_receipt: str) 
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <div class="container">
-  <div class="panel header-bar">
+  <header class="panel header-bar">
     <div>
       <h1>Cost-Aware Model Router — Pareto Explorer &amp; Auditable Savings Receipt</h1>
       <div class="sub mono" id="header-meta">Workload: {workload_title} | Integrity SHA-256: {digest_short}...</div>
@@ -106,8 +136,9 @@ def render_pareto_explorer_html(receipt: SavingsReceipt, markdown_receipt: str) 
       <button class="btn" id="btn-dl-json" type="button">Download JSON Receipt</button>
       <button class="btn" id="btn-dl-md" type="button">Download MD Receipt</button>
     </div>
-  </div>
+  </header>
 
+  <main id="main-content">
   <div class="kpi-grid">
     <div class="kpi-card">
       <div class="kpi-label">Baseline (All-Frontier)</div>
@@ -136,12 +167,12 @@ def render_pareto_explorer_html(receipt: SavingsReceipt, markdown_receipt: str) 
       <h2>1. Interactive 2D Cost vs Quality Pareto Frontier</h2>
       <div class="slider-row">
         <label for="quality-slider" class="mono"><strong>Quality Floor (q_min):</strong></label>
-        <input id="quality-slider" type="range" min="50" max="100" step="1" value="92">
+        <input id="quality-slider" type="range" min="50" max="100" step="1" value="92" aria-label="Minimum quality floor">
         <span class="mono" id="quality-slider-val"><strong>92%</strong></span>
       </div>
-      <div class="banner-warn" id="infeasible-banner"></div>
+      <div class="banner-warn" id="infeasible-banner" aria-live="polite"></div>
       <div class="chart-wrap">
-        <svg id="pareto-svg" width="100%" height="100%" viewBox="0 0 680 270" preserveAspectRatio="xMidYMid meet"></svg>
+        <svg id="pareto-svg" role="img" aria-label="2D Pareto Frontier Chart" width="100%" height="100%" viewBox="0 0 680 270" preserveAspectRatio="xMidYMid meet"></svg>
       </div>
     </div>
 
@@ -157,29 +188,30 @@ def render_pareto_explorer_html(receipt: SavingsReceipt, markdown_receipt: str) 
     <div class="filter-bar">
       <h2 style="border:none; margin:0; padding:0;">3. Per-Request Routing Decisions &amp; Explanations</h2>
       <div class="filter-tabs">
-        <button class="btn btn-active" data-filter="all" type="button">All</button>
-        <button class="btn" data-filter="frontier" type="button">Frontier Required</button>
-        <button class="btn" data-filter="regressions" type="button">Regressions vs Baseline</button>
-        <button class="btn" data-filter="unknown" type="button">Excluded Unknown</button>
+        <button class="btn btn-active" data-filter="all" type="button" aria-pressed="true">All</button>
+        <button class="btn" data-filter="frontier" type="button" aria-pressed="false">Frontier Required</button>
+        <button class="btn" data-filter="regressions" type="button" aria-pressed="false">Regressions vs Baseline</button>
+        <button class="btn" data-filter="unknown" type="button" aria-pressed="false">Excluded Unknown</button>
       </div>
     </div>
     <table>
       <thead>
         <tr>
-          <th>Req ID</th>
-          <th>Category</th>
-          <th>Selected Tier</th>
-          <th>Baseline -&gt; Selected Cost</th>
-          <th>Latency</th>
-          <th>Eval Verdict</th>
-          <th>Provenance</th>
-          <th>Routing Explanation</th>
+          <th scope="col">Req ID</th>
+          <th scope="col">Category</th>
+          <th scope="col">Selected Tier</th>
+          <th scope="col">Baseline -&gt; Selected Cost</th>
+          <th scope="col">Latency</th>
+          <th scope="col">Eval Verdict</th>
+          <th scope="col">Provenance</th>
+          <th scope="col">Routing Explanation</th>
         </tr>
       </thead>
       <tbody id="decisions-tbody"></tbody>
     </table>
     <div class="empty-state" id="table-empty-state"></div>
   </div>
+  </main>
 </div>
 
 <script id="pareto-data" type="application/json">{safe_json}</script>
@@ -450,8 +482,10 @@ def render_pareto_explorer_html(receipt: SavingsReceipt, markdown_receipt: str) 
     btn.addEventListener("click", function() {{
       Array.prototype.forEach.call(document.querySelectorAll("[data-filter]"), function(b) {{
         b.classList.remove("btn-active");
+        b.setAttribute("aria-pressed", "false");
       }});
       btn.classList.add("btn-active");
+      btn.setAttribute("aria-pressed", "true");
       currentFilter = btn.getAttribute("data-filter") || "all";
       renderTable(currentPolicy);
     }});
