@@ -119,9 +119,9 @@ As a result, teams either overpay by sending every prompt to a frontier model (`
 | [telemetry.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/telemetry.py) | OpenTelemetry `gen_ai.*` and `cost_router.*` span instrumentation (`OTelSpanRecord`, `InMemorySpanExporter`), declarative policy loader (`load_policies_from_json`), and stratified holdout splitting (`split_workload_holdout`). |
 | [metrics.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/metrics.py) | Zero-dependency Prometheus `0.0.4` / OpenMetrics text exporter (`render_prometheus_metrics`) with label-value escaping (`escape_prometheus_label_value`) for `GET /metrics`. |
 | [judge.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/judge.py) | `LLMJudge` protocol, `DeterministicRubricJudge`, and `OutOfSamplePolicyAuditor` for train/holdout policy generalization audits (`HoldoutGeneralizationReport`). |
-| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `_RouterHTTPServer` (`ThreadingHTTPServer` + shared `_AsyncLoopRunner` background event loop via `create_router_http_server`) exposing `/healthz`, `/readyz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `POST /v1/finops/circuits/reset` (`ADMIN`), `/metrics`, and `/dashboard`, with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`). |
+| [server.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/server.py) | Zero-dependency `_RouterHTTPServer` (`ThreadingHTTPServer` + shared `_AsyncLoopRunner` background event loop via `create_router_http_server`) exposing `GET`/`HEAD` `/healthz`, `GET`/`HEAD` `/readyz`, `/v1/models` (`ROUTER_CLIENT`), `/v1/chat/completions` (with 1 MiB `413` payload guard), `/v1/finops/shadow-summary`, `/v1/finops/economics`, `/v1/finops/circuits` (`AUDITOR`), `POST /v1/finops/circuits/reset` (`ADMIN`), `/metrics`, and `/dashboard`, with `X-Request-Id` correlation and security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control`). |
 | [store.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/store.py) | Thread-safe WAL-mode `SQLiteEconomicsStore` for durable persistence of `SpendLedgerEntry`, `ShadowComparisonRecord`, and `OTelSpanRecord` with 8-place USD string precision, `SpendSummary` aggregation, `is_healthy()` readiness probe, and `prune_older_than()` telemetry retention pruning. |
-| [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, `cost-router train-bandit`, `cost-router issue-key`, `cost-router revoke-key`, `cost-router prune-db`, and `cost-router serve`. |
+| [cli.py](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/src/cost_aware_model_router/cli.py) | Command-line interface exposing `cost-router demo`, `cost-router replay`, `cost-router verify-receipt`, `cost-router simulate-thermostat`, `cost-router audit-holdout`, `cost-router train-bandit`, `cost-router issue-key`, `cost-router list-keys`, `cost-router rotate-key`, `cost-router revoke-key`, `cost-router prune-db`, and `cost-router serve`. |
 
 ---
 
@@ -294,6 +294,14 @@ cost-router issue-key \
   --burst-capacity 40 \
   --out ./artifacts/auth-config.json
 
+# List registered tenant virtual API keys (non-secret metadata only)
+cost-router list-keys --auth-config ./artifacts/auth-config.json
+
+# Atomically rotate a tenant virtual API key (issues replacement key and disables old key by default)
+cost-router rotate-key \
+  --key-id <key_id> \
+  --auth-config ./artifacts/auth-config.json
+
 # Revoke (disable) a tenant virtual API key in auth-config.json
 cost-router revoke-key \
   --key-id <key_id> \
@@ -326,11 +334,13 @@ All HTTP responses include `X-Request-Id` correlation (propagating a valid incom
 Query the running server with `curl`:
 
 ```bash
-# Liveness / container HEALTHCHECK probe
+# Liveness / container HEALTHCHECK probe (supports GET and HEAD)
 curl -s http://127.0.0.1:8080/healthz
+curl -s -I http://127.0.0.1:8080/healthz
 
-# Readiness probe (returns 200 {"status":"ready"}, or 503 when SQLiteEconomicsStore.is_healthy() is false or all tier circuits are open)
+# Readiness probe (supports GET and HEAD; returns 200 {"status":"ready"}, or 503 when SQLiteEconomicsStore.is_healthy() is false or all tier circuits are open)
 curl -s -i http://127.0.0.1:8080/readyz
+curl -s -I http://127.0.0.1:8080/readyz
 
 # OpenAI-compatible model discovery (ROUTER_CLIENT role)
 curl -s http://127.0.0.1:8080/v1/models
@@ -394,8 +404,10 @@ cost-router demo --out ./artifacts/demo --quality-floor 0.92
 # 2. Calibrate UCB1 contextual bandit and export bandit-policy.json
 cost-router train-bandit --out ./artifacts/bandit --epochs 4 --quality-floor 0.85
 
-# 3. Issue or revoke a hashed tenant API key (ROUTER_CLIENT, AUDITOR, or ADMIN)
+# 3. Issue, list, rotate, or revoke hashed tenant API keys (ROUTER_CLIENT, AUDITOR, or ADMIN)
 cost-router issue-key --org-id org_demo --role router_client --out ./artifacts/auth-config.json
+cost-router list-keys --auth-config ./artifacts/auth-config.json
+cost-router rotate-key --key-id <key_id> --auth-config ./artifacts/auth-config.json
 cost-router revoke-key --key-id <key_id> --auth-config ./artifacts/auth-config.json
 
 # 4. Serve OpenAI-compatible gateway (offline fixture or --live --provider openai|anthropic) with fallback circuit breakers, bandit policy, tenant auth/budget configs, and structured access logging
@@ -464,6 +476,7 @@ pytest -q
 - **ADR-010 (Live Serve Provider Wiring, Key Revocation, Graceful Shutdown & Store Readiness):** [docs/adr/010-live-serve-provider-and-store-readiness.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/010-live-serve-provider-and-store-readiness.md)
 - **ADR-011 (Shared Event Loop, Bounded Store Retention Pruning & Circuit Breaker Reset):** [docs/adr/011-shared-event-loop-retention-and-circuit-reset.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/011-shared-event-loop-retention-and-circuit-reset.md)
 - **ADR-012 (Structured Access Log, Burst Socket Hardening, Multi-Tenant Budget Config & `429 Retry-After`):** [docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/012-structured-access-log-and-multi-tenant-budget-config.md)
+- **ADR-013 (HTTP `HEAD` Probe Support & Atomic Tenant Key Rotation):** [docs/adr/013-head-probes-and-key-rotation.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/adr/013-head-probes-and-key-rotation.md)
 - **Contributing Guide (Setup, Static Checks, ADR Process & Security Rules):** [CONTRIBUTING.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/CONTRIBUTING.md)
 - **Changelog (Release History):** [CHANGELOG.md](CHANGELOG.md)
 - **STRIDE Threat Model & AI-Router Security Mitigations:** [docs/THREAT_MODEL.md](file:///Users/justinmafie/Documents/antigravity/cost-aware-model-router/docs/THREAT_MODEL.md)
