@@ -13,3 +13,8 @@ artifacts/
 .env
 .env.*
 .DS_Store
+.agents/
+.coverage
+htmlcov/
+*.db
+*.sqlite3

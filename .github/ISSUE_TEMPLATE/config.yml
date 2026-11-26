@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation & Architecture Guides
+    url: https://github.com/creova-gif/cost-aware-model-router/blob/main/README.md
+    about: Check README.md, docs/THREAT_MODEL.md, and docs/adr/ before opening an issue.
